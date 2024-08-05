@@ -469,6 +469,13 @@ function makeGl(canvas) {
   return gl;
 }
 
+function hookupCheckbox(elem, fn) {
+  elem.onchange = (ev) => {
+    fn(ev.target.checked);
+  };
+  fn(elem.checked);
+}
+
 async function init() {
   const canvas = initCanvas();
   const tags_div = document.getElementById("tags");
@@ -483,25 +490,25 @@ async function init() {
   mod.instance.exports.init(canvasAspect(canvas));
   mod.instance.exports.render();
 
-  const debug_way_finding = document.getElementById("debug_way_finding");
-  debug_way_finding.onchange = (ev) => {
-    mod.instance.exports.setDebugWayFinding(ev.target.checked);
-  };
-  mod.instance.exports.setDebugWayFinding(debug_way_finding.checked);
-
-  const debug_point_neighbors = document.getElementById(
-    "debug_point_neighbors",
+  hookupCheckbox(
+    document.getElementById("debug_way_finding"),
+    mod.instance.exports.setDebugWayFinding,
   );
-  debug_point_neighbors.onchange = (ev) => {
-    mod.instance.exports.setDebugPointNeighbors(ev.target.checked);
-  };
-  mod.instance.exports.setDebugPointNeighbors(debug_point_neighbors.checked);
 
-  const debug_path = document.getElementById("debug_path");
-  debug_path.onchange = (ev) => {
-    mod.instance.exports.setDebugPath(ev.target.checked);
-  };
-  mod.instance.exports.setDebugPath(debug_path.checked);
+  hookupCheckbox(
+    document.getElementById("debug_point_neighbors"),
+    mod.instance.exports.setDebugPointNeighbors,
+  );
+
+  hookupCheckbox(
+    document.getElementById("debug_path"),
+    mod.instance.exports.setDebugPath,
+  );
+
+  hookupCheckbox(
+    document.getElementById("debug_parenting"),
+    mod.instance.exports.setDebugParenting,
+  );
 
   const canvas_callbacks = new CanvasInputHandler(gl, canvas, mod);
   canvas_callbacks.setCanvasCallbacks();

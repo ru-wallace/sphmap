@@ -178,7 +178,7 @@ fn updateNeighbor(self: *PathPlanner, current: AStarNode, neighbor: AStarNode, c
         neighbor_point.sub(current_point),
     );
 
-    const node_cost = self.node_costs.getCost(current.me, neighbor.me);
+    const node_cost = self.node_costs.get(current.me, neighbor.me) orelse 1.0;
     const tentative_score = current_score + self.distance(current.me, neighbor.me) * node_cost + this_turning_cost;
     const neighbor_entry = self.gscores.get(neighbor);
     if (tentative_score >= neighbor_entry.*) {

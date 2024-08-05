@@ -4,6 +4,10 @@ const Metadata = @import("Metadata.zig");
 const image_tile_data = @import("image_tile_data.zig");
 const Allocator = std.mem.Allocator;
 
+const std_options: std.Options = .{
+    .log_level = .debug,
+};
+
 const c = @cImport({
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
     @cDefine("CIMGUI_USE_GLFW", "");
@@ -410,6 +414,7 @@ const Ui = struct {
     debug_path_planning: bool = false,
     debug_point_neighbors: bool = false,
     debug_way_finding: bool = false,
+    debug_parenting: bool = false,
     color_picker_id: ?usize = null,
     turning_cost: f32 = 0,
 
@@ -485,6 +490,7 @@ const Ui = struct {
         debug_path_planning: ?bool = null,
         debug_point_neighbors: ?bool = null,
         debug_way_finding: ?bool = null,
+        debug_parenting: ?bool = null,
         add_monitored_attribute: ?struct { k: [*]const u8, v: [*]const u8 } = null,
         remove_monitored_attribute: ?usize = null,
         update_cost_multiplier: ?struct { id: usize, value: f32 } = null,
@@ -531,6 +537,10 @@ const Ui = struct {
 
         if (c.igCheckbox("Debug path planning", &self.debug_path_planning)) {
             ret.debug_path_planning = self.debug_path_planning;
+        }
+
+        if (c.igCheckbox("Debug parenting", &self.debug_parenting)) {
+            ret.debug_parenting = self.debug_parenting;
         }
 
         if (c.igBeginTable("tags", 4, 0, .{ .x = overlay_width, .y = 0 }, 0)) {
@@ -628,6 +638,10 @@ fn handleUiActions(app: *App, actions: Ui.RequestedActions) !void {
 
     if (actions.debug_way_finding) |value| {
         app.debug_way_finding = value;
+    }
+
+    if (actions.debug_parenting) |value| {
+        app.debug_parenting = value;
     }
 
     if (actions.add_monitored_attribute) |value| {

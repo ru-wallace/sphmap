@@ -25,6 +25,7 @@ const StringTable = map_data.StringTable;
 const gui = @import("gui_bindings.zig");
 const ViewState = Renderer.ViewState;
 const WaysForTagPair = map_data.WaysForTagPair;
+const WayBuckets = map_data.WayBuckets;
 
 const App = @This();
 
@@ -45,9 +46,11 @@ closest_node: NodeId = NodeId{ .value = 0 },
 turning_cost: f32 = 0.0,
 textures: []i32,
 monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
+point_pair_to_parent: map_data.PointPairToWayMap,
 debug_way_finding: bool = false,
 debug_point_neighbors: bool = false,
 debug_path_finding: bool = false,
+debug_parenting: bool = false,
 
 pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *const Metadata, image_tile_metadata: ImageTileData) !*App {
     const split_data = map_data.MapDataComponents.init(map_data_buf, metadata.*);
@@ -75,7 +78,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
 
     const point_lookup = PointLookup{ .points = split_data.point_data };
 
-    const index_buffer_objs = try parseIndexBuffer(alloc, point_lookup, meter_metdata.width, meter_metdata.height, split_data.index_data);
+    const index_buffer_objs = try map_data.parseIndexBuffer(alloc, point_lookup, meter_metdata.width, meter_metdata.height, split_data.index_data);
     var way_lookup = index_buffer_objs[0];
     errdefer way_lookup.deinit(alloc);
 
@@ -84,6 +87,16 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
 
     var adjacency_map = index_buffer_objs[2];
     errdefer adjacency_map.deinit(alloc);
+
+    var point_pair_to_parent = try map_data.findSidewalkStreets(
+        alloc,
+        &point_lookup,
+        &way_buckets,
+        &string_table,
+        &way_lookup,
+        metadata,
+    );
+    errdefer point_pair_to_parent.deinit();
 
     var renderer = Renderer.init(split_data.point_data, split_data.index_data);
     renderer.bind().render(view_state);
@@ -104,13 +117,14 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .points = point_lookup,
         .ways = way_lookup,
         .way_buckets = way_buckets,
+        .point_pair_to_parent = point_pair_to_parent,
         .string_table = string_table,
         .textures = textures,
         // Sibling reference
         .monitored_attributes = undefined,
     };
 
-    ret.monitored_attributes = monitored_attributes.MonitoredAttributeTracker.init(alloc, metadata, &ret.ways);
+    ret.monitored_attributes = monitored_attributes.MonitoredAttributeTracker.init(alloc, metadata, &ret.ways, &ret.point_pair_to_parent, &ret.adjacency_map);
 
     return ret;
 }
@@ -122,6 +136,7 @@ pub fn deinit(self: *App) void {
     self.string_table.deinit(self.alloc);
     self.monitored_attributes.deinit();
     self.alloc.free(self.textures);
+    self.point_pair_to_parent.deinit();
     self.alloc.destroy(self);
 }
 
@@ -200,6 +215,17 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
             unreachable;
         }
         const node_id = way.node_ids[calc.min_way_segment];
+
+        if (self.debug_parenting) {
+            const neighbor_id = way.node_ids[calc.neighbor_segment];
+            if (self.point_pair_to_parent.get(node_id, neighbor_id)) |parent| {
+                bound_renderer.inner.r.set(0);
+                bound_renderer.inner.g.set(0);
+                bound_renderer.inner.b.set(1);
+                bound_renderer.renderSelectedWay(self.ways.get(parent));
+            }
+        }
+
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
 
@@ -328,39 +354,8 @@ pub fn removeMonitoredAttribute(self: *App, id: usize) !void {
     }
 }
 
-fn parseIndexBuffer(
-    alloc: Allocator,
-    point_lookup: PointLookup,
-    width: f32,
-    height: f32,
-    index_buffer: []const u32,
-) !struct { WayLookup, WayBuckets, NodeAdjacencyMap } {
-    var ways = WayLookup.Builder.init(alloc, index_buffer);
-    defer ways.deinit();
-
-    var way_buckets = try WayBuckets.init(alloc, width, height);
-    var it = map_data.IndexBufferIt.init(index_buffer);
-    var way_id: WayId = .{ .value = 0 };
-
-    var node_neighbors = try NodeAdjacencyMap.Builder.init(alloc, point_lookup.numPoints());
-    defer node_neighbors.deinit();
-
-    while (it.next()) |idx_buf_range| {
-        defer way_id.value += 1;
-        const way = map_data.Way.fromIndexRange(idx_buf_range, index_buffer);
-
-        try ways.feed(way);
-        try node_neighbors.feed(way);
-
-        for (way.node_ids) |node_id| {
-            const gps_pos = point_lookup.get(node_id);
-            try way_buckets.push(way_id, gps_pos.y, gps_pos.x);
-        }
-    }
-
-    const node_adjacency_map = try node_neighbors.build();
-    const way_lookup = try ways.build();
-    return .{ way_lookup, way_buckets, node_adjacency_map };
+pub fn setMonitoredCostMultiplier(self: *App, id: usize, multiplier: f32) !void {
+    self.monitored_attributes.cost.update(id, multiplier);
 }
 
 const ClosestWayCalculator = struct {
@@ -379,6 +374,7 @@ const ClosestWayCalculator = struct {
     min_dist_loc: MapPos,
     min_way: WayId,
     min_way_segment: usize,
+    neighbor_segment: usize,
 
     const DebugInfo = struct {
         dist: f32,
@@ -396,6 +392,7 @@ const ClosestWayCalculator = struct {
             .min_dist_loc = undefined,
             .min_way = undefined,
             .min_way_segment = undefined,
+            .neighbor_segment = undefined,
             .pos = p,
         };
     }
@@ -439,74 +436,15 @@ const ClosestWayCalculator = struct {
                 const ap_len = self.pos.sub(a).length();
                 if (ap_len / ab_len > 0.5) {
                     self.min_way_segment = self.segment_idx + 1;
+                    self.neighbor_segment = self.segment_idx;
                 } else {
                     self.min_way_segment = self.segment_idx;
+                    self.neighbor_segment = self.segment_idx + 1;
                 }
             }
 
             return ret;
         }
-    }
-};
-
-const WayBuckets = struct {
-    const x_buckets = 100;
-    const y_buckets = 100;
-    const BucketId = struct {
-        value: usize,
-    };
-
-    const WayIdSet = std.AutoArrayHashMapUnmanaged(WayId, void);
-    alloc: Allocator,
-    buckets: []WayIdSet,
-    width: f32,
-    height: f32,
-
-    fn init(alloc: Allocator, width: f32, height: f32) !WayBuckets {
-        const buckets = try alloc.alloc(WayIdSet, x_buckets * y_buckets);
-        for (buckets) |*bucket| {
-            bucket.* = .{};
-        }
-
-        return .{
-            .alloc = alloc,
-            .buckets = buckets,
-            .width = width,
-            .height = height,
-        };
-    }
-
-    fn deinit(self: *WayBuckets) void {
-        for (self.buckets) |*bucket| {
-            bucket.deinit(self.alloc);
-        }
-        self.alloc.free(self.buckets);
-    }
-
-    fn latLongToBucket(self: *WayBuckets, lat: f32, lon: f32) BucketId {
-        const row_f = lat / self.height * y_buckets;
-        const col_f = lon / self.width * x_buckets;
-        var row: usize = @intFromFloat(row_f);
-        var col: usize = @intFromFloat(col_f);
-
-        if (row >= x_buckets) {
-            row = x_buckets - 1;
-        }
-
-        if (col >= y_buckets) {
-            col = y_buckets - 1;
-        }
-        return .{ .value = row * x_buckets + col };
-    }
-
-    fn push(self: *WayBuckets, way_id: WayId, lat: f32, long: f32) !void {
-        const idx = self.latLongToBucket(lat, long);
-        try self.buckets[idx.value].put(self.alloc, way_id, {});
-    }
-
-    fn get(self: *WayBuckets, lat: f32, long: f32) []WayId {
-        const bucket = self.latLongToBucket(lat, long);
-        return self.buckets[bucket.value].keys();
     }
 };
 

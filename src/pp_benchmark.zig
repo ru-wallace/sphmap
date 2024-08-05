@@ -197,27 +197,6 @@ fn readFileData(alloc: Allocator, p: []const u8) ![]u8 {
     return try f.readToEndAlloc(alloc, 1 << 30);
 }
 
-fn parseIndexBuffer(alloc: Allocator, point_lookup: *const map_data.PointLookup, index_buffer: []const u32) !struct { WayLookup, map_data.NodeAdjacencyMap } {
-    var ways = WayLookup.Builder.init(alloc, index_buffer);
-    defer ways.deinit();
-
-    var node_neighbors = try map_data.NodeAdjacencyMap.Builder.init(alloc, point_lookup.numPoints());
-    defer node_neighbors.deinit();
-
-    var it = map_data.IndexBufferIt.init(index_buffer);
-
-    while (it.next()) |idx_buf_range| {
-        const way = map_data.Way.fromIndexRange(idx_buf_range, index_buffer);
-        try ways.feed(way);
-        try node_neighbors.feed(way);
-    }
-
-    const way_lookup = try ways.build();
-    const adjacency_map = try node_neighbors.build();
-
-    return .{ way_lookup, adjacency_map };
-}
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -238,21 +217,39 @@ pub fn main() !void {
 
     const split_data = map_data.MapDataComponents.init(map_data_buf, parsed.value);
 
-    _ = map_data.latLongToMeters(split_data.point_data, parsed.value);
+    const meter_metadata = map_data.latLongToMeters(split_data.point_data, parsed.value);
 
     const point_lookup = map_data.PointLookup{ .points = split_data.point_data };
-    const elems = try parseIndexBuffer(alloc, &point_lookup, split_data.index_data);
+    const elems = try map_data.parseIndexBuffer(
+        alloc,
+        point_lookup,
+        meter_metadata.width,
+        meter_metadata.height,
+        split_data.index_data,
+    );
     var way_lookup = elems[0];
     defer way_lookup.deinit(alloc);
 
-    var adjacency_map = elems[1];
-    defer adjacency_map.deinit(alloc);
+    var buckets = elems[1];
+    defer buckets.deinit();
 
-    var cost_tracker = monitored_attributes.CostTracker.init(alloc, &parsed.value, &way_lookup);
-    defer cost_tracker.deinit();
+    var adjacency_map = elems[2];
+    defer adjacency_map.deinit(alloc);
 
     var string_table = try map_data.StringTable.init(alloc, split_data.string_table_data);
     defer string_table.deinit(alloc);
+
+    var point_to_parent = try map_data.findSidewalkStreets(alloc, &point_lookup, &buckets, &string_table, &way_lookup, &parsed.value);
+    defer point_to_parent.deinit();
+
+    var cost_tracker = monitored_attributes.CostTracker.init(
+        alloc,
+        &parsed.value,
+        &way_lookup,
+        &point_to_parent,
+        &adjacency_map,
+    );
+    defer cost_tracker.deinit();
 
     for (args.attribute_costs) |cost| {
         const k_id = string_table.findByStringContent(cost.k);
@@ -261,12 +258,18 @@ pub fn main() !void {
         try cost_tracker.update(id, cost.cost);
     }
 
-    var node_costs = map_data.NodePairCostMultiplierMap.init(alloc);
-    defer node_costs.deinit();
-
     const start = try std.time.Instant.now();
     for (0..args.num_iters) |_| {
-        var pp = try PathPlanner.init(alloc, &point_lookup, &adjacency_map, &node_costs, args.start, args.end, args.turning_cost, 1.0);
+        var pp = try PathPlanner.init(
+            alloc,
+            &point_lookup,
+            &adjacency_map,
+            &cost_tracker.node_costs,
+            args.start,
+            args.end,
+            args.turning_cost,
+            1.0,
+        );
         defer pp.deinit();
 
         const path = try pp.run();

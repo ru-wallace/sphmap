@@ -121,6 +121,11 @@ pub export fn setDebugPath(val: bool) void {
     global.app.render();
 }
 
+pub export fn setDebugParenting(val: bool) void {
+    global.app.debug_parenting = val;
+    global.app.render();
+}
+
 pub export fn startPath() void {
     global.app.startPath();
 }
