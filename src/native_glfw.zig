@@ -498,14 +498,17 @@ const Ui = struct {
 
         _ = c.igBegin("Overlay", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar);
 
-        if (c.igBeginTable("tags", 2, c.ImGuiTableFlags_SizingStretchProp, .{ .x = overlay_width, .y = 0 }, 0)) {
+        const add_button_width = 30;
+        if (c.igBeginTable("tags", 2, 0, .{ .x = overlay_width, .y = 0 }, 0)) {
+            c.igTableSetupColumn("", c.ImGuiTableColumnFlags_WidthFixed, overlay_width - 60, 0);
+            c.igTableSetupColumn("", c.ImGuiTableColumnFlags_WidthFixed, add_button_width, 0);
             for (globals.displayed_tags.items, 0..) |tag, i| {
                 c.igPushID_Int(@intCast(i));
                 c.igTableNextRow(0, 0);
                 _ = c.igTableNextColumn();
                 c.igText("%.*s: %.*s", tag.key.len, tag.key.ptr, tag.val.len, tag.val.ptr);
                 _ = c.igTableNextColumn();
-                if (c.igButton("add", .{ .x = 0, .y = 0 })) {
+                if (c.igButton("add", .{ .x = add_button_width, .y = 0 })) {
                     ret.add_monitored_attribute = .{
                         .k = tag.key.ptr,
                         .v = tag.val.ptr,
