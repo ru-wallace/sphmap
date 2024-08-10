@@ -75,6 +75,7 @@ const Builder = struct {
             .target = self.target,
             .optimize = self.opt,
         });
+        exe.want_lto = false;
         exe.addCSourceFiles(.{
             .files = &.{
                 "cimgui/cimgui.cpp",
