@@ -37,7 +37,7 @@ fn LinearAstarLookup(comptime T: type) type {
         }
 
         fn get(self: *Self, node: AStarNode) *T {
-            return &self.storage[self.segment_starts[node.me.value] + node.came_from.value];
+            return &self.storage[self.segment_starts[node.came_from.value] + node.me.value];
         }
     };
 }
@@ -64,8 +64,8 @@ const NeighborIndex = struct {
 };
 
 const AStarNode = struct {
-    me: NodeId,
-    came_from: NeighborIndex,
+    me: NeighborIndex,
+    came_from: NodeId,
 };
 
 const NodeWithFscore = struct {
@@ -101,8 +101,8 @@ pub fn init(alloc: Allocator, points: *const PointLookup, adjacency_map: *const 
 
     try ret.q.add(.{
         .id = .{
-            .me = start,
-            .came_from = .{ .value = 0xff },
+            .me = .{ .value = 0xff },
+            .came_from = start,
         },
         .fscore = ret.distance(start, end),
     });
@@ -131,11 +131,15 @@ fn reconstructPath(self: *PathPlanner, end: AStarNode) ![]const NodeId {
     var ret = std.ArrayList(NodeId).init(self.alloc);
     defer ret.deinit();
 
+    try ret.append(self.end);
+
     var it = end;
-    while (it.me.value != self.start.value) {
-        try ret.append(it.me);
+    while (it.came_from.value != self.start.value) {
+        try ret.append(it.came_from);
         it = self.came_from.get(it).*;
     }
+
+    try ret.append(self.start);
     return try ret.toOwnedSlice();
 }
 
@@ -153,44 +157,35 @@ fn turningCost(self: *const PathPlanner, ab: Vec, bc: Vec) f32 {
     return turning_amount * self.turning_cost;
 }
 
-fn cameFromPoint(self: *const PathPlanner, node: AStarNode, current_point: Point) Point {
-    const current_neighbors = self.adjacency_map.getNeighbors(node.me);
+fn updateNeighbor(self: *PathPlanner, current_id: NodeId, neighbor_id: NodeId, current: AStarNode, current_score: f32) !void {
+    const current_point = self.points.get(current_id);
+    const current_from_point = self.points.get(current.came_from);
 
-    if (node.came_from.value >= current_neighbors.len) {
-        return current_point;
-    }
-
-    return self.points.get(current_neighbors[node.came_from.value]);
-}
-
-fn updateNeighbor(self: *PathPlanner, current: AStarNode, neighbor: AStarNode, current_score: f32) !void {
-    const neighbor_neighbors = self.adjacency_map.getNeighbors(neighbor.me);
-
-    const current_point = self.points.get(current.me);
-    const current_from_point = self.cameFromPoint(current, current_point);
-
-    std.debug.assert(current.me.value == neighbor_neighbors[neighbor.came_from.value].value);
-
-    const neighbor_point = self.points.get(neighbor.me);
+    const neighbor_point = self.points.get(neighbor_id);
 
     const this_turning_cost = self.turningCost(
         current_point.sub(current_from_point),
         neighbor_point.sub(current_point),
     );
 
-    const node_cost = self.node_costs.get(current.me, neighbor.me) orelse 1.0;
-    const tentative_score = current_score + self.distance(current.me, neighbor.me) * node_cost + this_turning_cost;
-    const neighbor_entry = self.gscores.get(neighbor);
+    const node_cost = self.node_costs.get(current_id, neighbor_id) orelse 1.0;
+    const tentative_score = current_score + self.distance(current_id, neighbor_id) * node_cost + this_turning_cost;
+    const neighbor_idx = self.findMyNeighborIndex(current_id, neighbor_id);
+    const neighbor_a_star_id = AStarNode{
+        .me = neighbor_idx,
+        .came_from = current_id,
+    };
+    const neighbor_entry = self.gscores.get(neighbor_a_star_id);
     if (tentative_score >= neighbor_entry.*) {
         return;
     }
 
     neighbor_entry.* = tentative_score;
-    const fscore = tentative_score + self.distance(neighbor.me, self.end) * self.min_cost_multiplier;
-    self.came_from.get(neighbor).* = current;
+    const fscore = tentative_score + self.distance(neighbor_id, self.end) * self.min_cost_multiplier;
+    self.came_from.get(neighbor_a_star_id).* = current;
 
     const neighbor_w_fscore = NodeWithFscore{
-        .id = neighbor,
+        .id = neighbor_a_star_id,
         .fscore = fscore,
     };
 
@@ -198,9 +193,12 @@ fn updateNeighbor(self: *PathPlanner, current: AStarNode, neighbor: AStarNode, c
 }
 
 fn findMyNeighborIndex(self: *const PathPlanner, me: NodeId, neighbor: NodeId) NeighborIndex {
-    const neighbor_neighbors = self.adjacency_map.getNeighbors(neighbor);
+    const start = self.adjacency_map.segment_starts[me.value];
+    const end = self.adjacency_map.segment_starts[me.value + 1];
+    const neighbor_neighbors = self.adjacency_map.storage[start..end];
+
     for (neighbor_neighbors, 0..) |node_id, i| {
-        if (node_id.value == me.value) {
+        if (node_id.value == neighbor.value) {
             return .{ .value = @intCast(i) };
         }
     }
@@ -210,23 +208,22 @@ fn findMyNeighborIndex(self: *const PathPlanner, me: NodeId, neighbor: NodeId) N
 
 fn step(self: *PathPlanner) !?[]const NodeId {
     const current_node_id = self.q.removeOrNull() orelse return error.NoPath;
-    if (current_node_id.id.me.value == self.end.value) {
+    const came_from_neighbors = self.adjacency_map.getNeighbors(current_node_id.id.came_from);
+    const me_node_id = if (came_from_neighbors.len <= current_node_id.id.me.value) current_node_id.id.came_from else came_from_neighbors[current_node_id.id.me.value];
+
+    if (me_node_id.value == self.end.value) {
         return try self.reconstructPath(current_node_id.id);
     }
 
-    const neighbors = self.adjacency_map.getNeighbors(current_node_id.id.me);
+    const neighbors = self.adjacency_map.getNeighbors(me_node_id);
+
     var current_gscore = self.gscores.get(current_node_id.id).*;
-    if (current_node_id.id.me.value == self.start.value) {
+    if (current_node_id.id.came_from.value == self.start.value and current_node_id.id.me.value == 0xff) {
         current_gscore = 0.0;
     }
 
     for (neighbors) |neighbor| {
-        const me_neighbor = self.findMyNeighborIndex(current_node_id.id.me, neighbor);
-        const neighbor_id: AStarNode = .{
-            .me = neighbor,
-            .came_from = me_neighbor,
-        };
-        try self.updateNeighbor(current_node_id.id, neighbor_id, current_gscore);
+        try self.updateNeighbor(me_node_id, neighbor, current_node_id.id, current_gscore);
     }
 
     return null;
