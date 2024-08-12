@@ -127,11 +127,21 @@ pub export fn setDebugParenting(val: bool) void {
 }
 
 pub export fn startPath() void {
-    global.app.startPath();
+    global.app.startPath() catch |e| {
+        std.log.err("Failed to start path: {s}", .{@errorName(e)});
+    };
 }
 
-pub export fn stopPath() void {
-    global.app.stopPath();
+pub export fn endPath() void {
+    global.app.endPath() catch |e| {
+        std.log.err("Failed to end path: {s}", .{@errorName(e)});
+    };
+}
+
+pub export fn stepPath(steps: u32) void {
+    global.app.stepPath(steps) catch |e| {
+        std.log.err("Failed to step path: {s}", .{@errorName(e)});
+    };
 }
 
 pub export fn setTurningCost(cost: f32) void {

@@ -56,6 +56,7 @@ min_cost_multiplier: f32,
 q: std.PriorityQueue(NodeWithFscore, void, order),
 start: NodeId,
 end: NodeId,
+final_node: ?AStarNode = null,
 
 const PathPlanner = @This();
 
@@ -206,12 +207,17 @@ fn findMyNeighborIndex(self: *const PathPlanner, me: NodeId, neighbor: NodeId) N
     @panic("No neighbor");
 }
 
-fn step(self: *PathPlanner) !?[]const NodeId {
+pub fn step(self: *PathPlanner) !?[]const NodeId {
+    if (self.final_node) |n| {
+        return try self.reconstructPath(n);
+    }
+
     const current_node_id = self.q.removeOrNull() orelse return error.NoPath;
     const came_from_neighbors = self.adjacency_map.getNeighbors(current_node_id.id.came_from);
     const me_node_id = if (came_from_neighbors.len <= current_node_id.id.me.value) current_node_id.id.came_from else came_from_neighbors[current_node_id.id.me.value];
 
     if (me_node_id.value == self.end.value) {
+        self.final_node = current_node_id.id;
         return try self.reconstructPath(current_node_id.id);
     }
 

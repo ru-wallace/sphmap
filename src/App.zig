@@ -41,8 +41,10 @@ ways: WayLookup,
 string_table: StringTable,
 adjacency_map: NodeAdjacencyMap,
 way_buckets: WayBuckets,
-path_start: ?NodeId = null,
+path_planner: ?PathPlanner = null,
 closest_node: NodeId = NodeId{ .value = 0 },
+path_start: ?NodeId = null,
+path_end: ?NodeId = null,
 turning_cost: f32 = 0.0,
 textures: []i32,
 monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
@@ -137,6 +139,9 @@ pub fn deinit(self: *App) void {
     self.monitored_attributes.deinit();
     self.alloc.free(self.textures);
     self.point_pair_to_parent.deinit();
+    if (self.path_planner) |*pp| {
+        pp.deinit();
+    }
     self.alloc.destroy(self);
 }
 
@@ -243,39 +248,6 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         }
         bound_renderer.inner.point_size.set(10.0);
         bound_renderer.renderPoints(&.{node_id}, Gl.POINTS);
-
-        if (self.path_start) |path_start| {
-            var pp = try PathPlanner.init(self.alloc, &self.points, &self.adjacency_map, &self.monitored_attributes.cost.node_costs, path_start, node_id, self.turning_cost, self.monitored_attributes.cost.min_cost_multiplier);
-            defer pp.deinit();
-
-            if (pp.run()) |new_path| {
-                defer self.alloc.free(new_path);
-
-                var seen_gscores = std.ArrayList(NodeId).init(self.alloc);
-                defer seen_gscores.deinit();
-
-                for (0..pp.gscores.segment_starts.len - 1) |i| {
-                    const start = pp.gscores.segment_starts[i];
-                    const end = pp.gscores.segment_starts[i + 1];
-                    for (pp.gscores.storage[start..end]) |score| {
-                        if (score != std.math.inf(f32)) {
-                            try seen_gscores.append(.{ .value = @intCast(i) });
-                            break;
-                        }
-                    }
-                }
-
-                bound_renderer.inner.r.set(1.0);
-                bound_renderer.inner.g.set(0.0);
-                bound_renderer.inner.b.set(0.0);
-                bound_renderer.renderPoints(new_path, Gl.LINE_STRIP);
-                if (self.debug_path_finding) {
-                    bound_renderer.renderPoints(seen_gscores.items, Gl.POINTS);
-                }
-            } else |e| {
-                std.log.err("err: {any} {d} {d}", .{ e, path_start.value, node_id.value });
-            }
-        }
     }
 }
 
@@ -317,14 +289,96 @@ pub fn render(self: *App) void {
         bound_renderer.inner.b.set(monitored.color.b);
         bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
     }
+
+    bound_renderer.inner.r.set(1.0);
+    bound_renderer.inner.g.set(0.0);
+    bound_renderer.inner.b.set(0.0);
+    bound_renderer.inner.point_size.set(10.0);
+    if (self.path_start) |s| {
+        bound_renderer.renderPoints(&.{s}, Gl.POINTS);
+    }
+
+    if (self.path_end) |end| {
+        bound_renderer.renderPoints(&.{end}, Gl.POINTS);
+    }
+
+    if (self.path_planner) |*pp| {
+        if (self.debug_path_finding) {
+            var seen_gscores = std.ArrayList(NodeId).init(self.alloc);
+            defer seen_gscores.deinit();
+
+            for (0..pp.gscores.segment_starts.len - 1) |i| {
+                const start = pp.gscores.segment_starts[i];
+                const end = pp.gscores.segment_starts[i + 1];
+                for (pp.gscores.storage[start..end]) |score| {
+                    if (score != std.math.inf(f32)) {
+                        seen_gscores.append(.{ .value = @intCast(i) }) catch return;
+                        break;
+                    }
+                }
+            }
+
+            bound_renderer.inner.r.set(1.0);
+            bound_renderer.inner.g.set(0.0);
+            bound_renderer.inner.b.set(0.0);
+            bound_renderer.renderPoints(seen_gscores.items, Gl.POINTS);
+        }
+
+        if (pp.final_node) |_| {
+            const res = pp.step() catch return orelse return;
+            defer self.alloc.free(res);
+
+            bound_renderer.inner.r.set(1.0);
+            bound_renderer.inner.g.set(0.0);
+            bound_renderer.inner.b.set(0.0);
+            bound_renderer.renderPoints(res, Gl.LINE_STRIP);
+        }
+    }
 }
 
-pub fn startPath(self: *App) void {
+pub fn startPath(self: *App) !void {
     self.path_start = self.closest_node;
+    if (self.path_end) |end| {
+        try self.resetPathPlanner(self.closest_node, end);
+    }
+    self.render();
 }
 
-pub fn stopPath(self: *App) void {
-    self.path_start = null;
+pub fn stepPath(self: *App, amount: u32) !void {
+    if (self.path_planner) |*pp| {
+        for (0..amount) |_| {
+            if (try pp.step()) |path| {
+                self.alloc.free(path);
+                return;
+            }
+        }
+    }
+    self.render();
+}
+
+pub fn endPath(self: *App) !void {
+    self.path_end = self.closest_node;
+    if (self.path_start) |s| {
+        try self.resetPathPlanner(s, self.closest_node);
+    }
+    self.render();
+}
+
+fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
+    const new_pp = try PathPlanner.init(self.alloc, &self.points, &self.adjacency_map, &self.monitored_attributes.cost.node_costs, start, end, self.turning_cost, self.monitored_attributes.cost.min_cost_multiplier);
+
+    if (self.path_planner) |*pp| pp.deinit();
+    self.path_planner = new_pp;
+
+    if (self.debug_path_finding) {
+        return;
+    }
+
+    if (self.path_planner) |*pp| {
+        if (pp.run()) |path| {
+            self.alloc.free(path);
+        } else |_| {}
+    }
 }
 
 pub fn registerTexture(self: *App, id: usize, tex: i32) !void {

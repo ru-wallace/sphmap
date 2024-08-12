@@ -519,9 +519,15 @@ async function init() {
     mod.instance.exports.startPath();
   };
 
-  const stop_path = document.getElementById("stop_path");
-  stop_path.onclick = () => {
-    mod.instance.exports.stopPath();
+  const end_path = document.getElementById("end_path");
+  end_path.onclick = () => {
+    mod.instance.exports.endPath();
+  };
+
+  const step_path = document.getElementById("step_path");
+  const num_steps = document.getElementById("num_steps");
+  step_path.onclick = () => {
+    mod.instance.exports.stepPath(num_steps.value);
   };
 
   const turning_cost = document.getElementById("turning_cost");

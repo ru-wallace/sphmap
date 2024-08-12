@@ -415,6 +415,7 @@ const Ui = struct {
     debug_point_neighbors: bool = false,
     debug_way_finding: bool = false,
     debug_parenting: bool = false,
+    step_amount: c_int = 1,
     color_picker_id: ?usize = null,
     turning_cost: f32 = 0,
 
@@ -486,6 +487,7 @@ const Ui = struct {
 
     const RequestedActions = struct {
         start_path_planning: bool = false,
+        step_path_planning: ?c_int = null,
         end_path_planning: bool = false,
         debug_path_planning: ?bool = null,
         debug_point_neighbors: ?bool = null,
@@ -582,8 +584,14 @@ const Ui = struct {
             ret.turning_cost = self.turning_cost;
         }
 
-        ret.start_path_planning = c.igButton("Start path planning", .{ .x = 0, .y = 0 });
-        ret.end_path_planning = c.igButton("End path planning", .{ .x = 0, .y = 0 });
+        ret.start_path_planning = c.igButton("Set path start", .{ .x = 0, .y = 0 });
+        ret.end_path_planning = c.igButton("Set path end", .{ .x = 0, .y = 0 });
+
+        _ = c.igInputInt("step amount", &self.step_amount, 0, 0, 0);
+        self.step_amount = @max(0, self.step_amount);
+        if (c.igButton("Step path planning", .{ .x = 0, .y = 0 })) {
+            ret.step_path_planning = self.step_amount;
+        }
 
         c.igEnd();
 
@@ -621,11 +629,15 @@ const Ui = struct {
 
 fn handleUiActions(app: *App, actions: Ui.RequestedActions) !void {
     if (actions.start_path_planning) {
-        app.startPath();
+        try app.startPath();
+    }
+
+    if (actions.step_path_planning) |amount| {
+        try app.stepPath(@intCast(amount));
     }
 
     if (actions.end_path_planning) {
-        app.stopPath();
+        try app.endPath();
     }
 
     if (actions.debug_path_planning) |value| {
