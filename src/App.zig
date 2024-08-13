@@ -83,7 +83,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
     errdefer way_lookup.deinit(alloc);
 
     var way_buckets = index_buffer_objs[1];
-    errdefer way_buckets.deinit();
+    errdefer way_buckets.deinit(alloc);
 
     var adjacency_map = index_buffer_objs[2];
     errdefer adjacency_map.deinit(alloc);
@@ -132,7 +132,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
 pub fn deinit(self: *App) void {
     self.adjacency_map.deinit(self.alloc);
     self.ways.deinit(self.alloc);
-    self.way_buckets.deinit();
+    self.way_buckets.deinit(self.alloc);
     self.string_table.deinit(self.alloc);
     self.monitored_attributes.deinit();
     self.alloc.free(self.textures);

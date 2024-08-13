@@ -231,7 +231,7 @@ pub fn main() !void {
     defer way_lookup.deinit(alloc);
 
     var buckets = elems[1];
-    defer buckets.deinit();
+    defer buckets.deinit(alloc);
 
     var adjacency_map = elems[2];
     defer adjacency_map.deinit(alloc);

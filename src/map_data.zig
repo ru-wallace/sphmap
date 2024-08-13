@@ -5,6 +5,8 @@ const lin = @import("lin.zig");
 const MapPos = lin.Point;
 const builtin = @import("builtin");
 const Point = lin.Point;
+pub const WayBuckets = MapBuckets(WayId);
+
 pub const PointPairToWayMap = NodePairMap(WayId);
 
 pub const NodeId = struct {
@@ -473,67 +475,6 @@ pub const NodePairsForParentTagPair = struct {
     }
 };
 
-pub const WayBuckets = struct {
-    const x_buckets = 150;
-    const y_buckets = 150;
-    const BucketId = struct {
-        value: usize,
-    };
-
-    const WayIdSet = std.AutoArrayHashMapUnmanaged(WayId, void);
-    alloc: Allocator,
-    buckets: []WayIdSet,
-    width: f32,
-    height: f32,
-
-    pub fn init(alloc: Allocator, width: f32, height: f32) !WayBuckets {
-        const buckets = try alloc.alloc(WayIdSet, x_buckets * y_buckets);
-        for (buckets) |*bucket| {
-            bucket.* = .{};
-        }
-
-        return .{
-            .alloc = alloc,
-            .buckets = buckets,
-            .width = width,
-            .height = height,
-        };
-    }
-
-    pub fn deinit(self: *WayBuckets) void {
-        for (self.buckets) |*bucket| {
-            bucket.deinit(self.alloc);
-        }
-        self.alloc.free(self.buckets);
-    }
-
-    pub fn latLongToBucket(self: *const WayBuckets, lat: f32, lon: f32) BucketId {
-        const row_f = lat / self.height * y_buckets;
-        const col_f = lon / self.width * x_buckets;
-        var row: usize = @intFromFloat(row_f);
-        var col: usize = @intFromFloat(col_f);
-
-        if (row >= x_buckets) {
-            row = x_buckets - 1;
-        }
-
-        if (col >= y_buckets) {
-            col = y_buckets - 1;
-        }
-        return .{ .value = row * x_buckets + col };
-    }
-
-    pub fn push(self: *WayBuckets, way_id: WayId, lat: f32, long: f32) !void {
-        const idx = self.latLongToBucket(lat, long);
-        try self.buckets[idx.value].put(self.alloc, way_id, {});
-    }
-
-    pub fn get(self: *const WayBuckets, lat: f32, long: f32) []WayId {
-        const bucket = self.latLongToBucket(lat, long);
-        return self.buckets[bucket.value].keys();
-    }
-};
-
 pub fn wayTagsContains(tags: Metadata.Tags, k: usize, v: usize) bool {
     for (0..tags[0].len) |i| {
         const tag_k = tags[0][i];
@@ -639,7 +580,7 @@ pub fn parseIndexBuffer(
     var ways = WayLookup.Builder.init(alloc, index_buffer);
     defer ways.deinit();
 
-    var way_buckets = try WayBuckets.init(alloc, width, height);
+    var way_buckets_builder = try WayBuckets.Builder.init(alloc, width, height);
     var it = IndexBufferIt.init(index_buffer);
     var way_id: WayId = .{ .value = 0 };
 
@@ -655,11 +596,114 @@ pub fn parseIndexBuffer(
 
         for (way.node_ids) |node_id| {
             const gps_pos = point_lookup.get(node_id);
-            try way_buckets.push(way_id, gps_pos.y, gps_pos.x);
+            try way_buckets_builder.push(way_id, gps_pos.y, gps_pos.x);
         }
     }
 
     const node_adjacency_map = try node_neighbors.build();
     const way_lookup = try ways.build();
+    const way_buckets = try way_buckets_builder.build();
     return .{ way_lookup, way_buckets, node_adjacency_map };
+}
+
+pub fn MapBuckets(comptime T: type) type {
+    return struct {
+        const x_buckets = 150;
+        const y_buckets = 150;
+        const BucketId = struct {
+            value: usize,
+        };
+
+        const Self = @This();
+
+        pub const Builder = struct {
+            const ItemSet = std.AutoArrayHashMapUnmanaged(T, void);
+
+            sets: []ItemSet,
+            alloc: Allocator,
+            inner: Self,
+
+            pub fn init(alloc: Allocator, width: f32, height: f32) !Builder {
+                const sets = try alloc.alloc(ItemSet, x_buckets * y_buckets);
+                for (sets) |*bucket| {
+                    bucket.* = .{};
+                }
+
+                return .{
+                    .sets = sets,
+                    .alloc = alloc,
+                    .inner = .{
+                        .buckets = &.{},
+                        .width = width,
+                        .height = height,
+                    },
+                };
+            }
+
+            // Should only be called if build is not called or does not succeed
+            pub fn deinit(self: *Builder) void {
+                for (self.sets) |*set| {
+                    set.deinit(self.alloc);
+                }
+                self.alloc.free(self.sets);
+            }
+
+            pub fn build(self: *Builder) !Self {
+                const inner_buckets = try self.alloc.alloc([]T, x_buckets * y_buckets);
+                var i: usize = 0;
+                errdefer {
+                    for (0..i) |j| {
+                        self.alloc.free(inner_buckets[j]);
+                    }
+                    self.alloc.free(inner_buckets);
+                }
+
+                while (i < self.sets.len) {
+                    defer i += 1;
+                    inner_buckets[i] = try self.alloc.dupe(T, self.sets[i].keys());
+                }
+
+                defer self.deinit();
+                self.inner.buckets = inner_buckets;
+                return self.inner;
+            }
+
+            pub fn push(self: *Builder, item: T, lat: f32, long: f32) !void {
+                const idx = latLongToBucket(lat, long, self.inner.height, self.inner.width);
+                try self.sets[idx.value].put(self.alloc, item, {});
+            }
+        };
+
+        buckets: [][]T,
+        width: f32,
+        height: f32,
+
+        fn latLongToBucket(lat: f32, lon: f32, height: f32, width: f32) BucketId {
+            const row_f = lat / height * y_buckets;
+            const col_f = lon / width * x_buckets;
+            var row: usize = @intFromFloat(row_f);
+            var col: usize = @intFromFloat(col_f);
+
+            if (row >= x_buckets) {
+                row = x_buckets - 1;
+            }
+
+            if (col >= y_buckets) {
+                col = y_buckets - 1;
+            }
+            return .{ .value = row * x_buckets + col };
+        }
+
+        pub fn deinit(self: *Self, alloc: Allocator) void {
+            for (self.buckets) |bucket| {
+                alloc.free(bucket);
+            }
+            alloc.free(self.buckets);
+        }
+
+        pub fn get(self: *const Self, lat: f32, long: f32) []T {
+            const bucket = latLongToBucket(lat, long, self.height, self.width);
+            return self.buckets[bucket.value];
+        }
+    };
 }
