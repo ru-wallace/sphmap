@@ -45,9 +45,14 @@ pub const Way = struct {
 
 pub const PointLookup = struct {
     points: []const f32,
+    first_transit_id: NodeId,
 
     pub fn numPoints(self: *const PointLookup) usize {
         return self.points.len / 2;
+    }
+
+    pub fn numTransitPoints(self: *const PointLookup) usize {
+        return self.numPoints() - self.first_transit_id.value;
     }
 
     pub fn get(self: *const PointLookup, id: NodeId) MapPos {
@@ -95,29 +100,85 @@ pub const WayLookup = struct {
     pub fn get(self: *const WayLookup, id: WayId) Way {
         return self.ways[id.value];
     }
+
+    pub fn indexBufferOffset(self: *const WayLookup, id: WayId, index_data: []const u32) usize {
+        if (id.value >= self.ways.len) {
+            return index_data.len;
+        }
+        const way = self.get(id);
+        return way.indexRange(index_data).start;
+    }
+};
+
+pub const TransitTripTimes = struct {
+    reference_data: [][]u32,
+    first_transit_way_id: WayId,
+    end_transit_way_id: WayId,
+
+    pub fn init(metadata: *const Metadata) TransitTripTimes {
+        return .{
+            .reference_data = metadata.transit_trip_times,
+            .first_transit_way_id = .{ .value = metadata.transit_way_start_idx },
+            .end_transit_way_id = .{ .value = metadata.osm_to_transit_way_start_idx },
+        };
+    }
+
+    pub fn getTransitTimes(self: *const TransitTripTimes, way_id: WayId) []const u32 {
+        std.debug.assert(way_id.value >= self.first_transit_way_id.value);
+        std.debug.assert(way_id.value < self.end_transit_way_id.value);
+        return self.reference_data[way_id.value - self.first_transit_way_id.value];
+    }
 };
 
 pub const NodeAdjacencyMap = struct {
-    // Where in storage this node's neighbors are. Indexed by NodeId
-    segment_starts: []u32,
-    // All neighbors for all nodes, Each node's neighbors are contiguous
-    storage: []const NodeId,
+    // Takes OSM node ID
+    // Valid for all node ids
+    osm_segment_starts: []u32,
+    to_osm_storage: []const NodeId,
+
+    // Takes Transit node id - transit start id
+    // Valid only for transit nodes
+    transit_segment_starts: []u32,
+    transit_to_transit_node_storage: []const NodeId,
+    transit_to_transit_time_storage: []const u32,
+
+    // Valid only for OSM nodes
+    osm_to_transit: std.AutoHashMap(NodeId, []const NodeId),
+
+    transit_start_id: NodeId,
 
     pub const Builder = struct {
-        arena: *std.heap.ArenaAllocator,
-        node_neighbors: []std.AutoArrayHashMapUnmanaged(NodeId, void),
+        const TTConn = struct {
+            departure_time: u32,
+            node: NodeId,
+        };
 
-        pub fn init(alloc: Allocator, num_points: usize) !Builder {
+        arena: *std.heap.ArenaAllocator,
+        to_osm_node_neighbors: []std.AutoArrayHashMapUnmanaged(NodeId, void),
+        transit_to_transit_connections: []std.ArrayListUnmanaged(TTConn),
+        osm_to_transit_neighbors: std.AutoHashMap(NodeId, std.ArrayList(NodeId)),
+        transit_start_id: NodeId,
+
+        pub fn init(alloc: Allocator, num_points: usize, transit_start_id: NodeId) !Builder {
             var arena = try alloc.create(std.heap.ArenaAllocator);
             errdefer alloc.destroy(arena);
             arena.* = std.heap.ArenaAllocator.init(alloc);
 
             const arena_alloc = arena.allocator();
-            const node_neighbors = try arena_alloc.alloc(std.AutoArrayHashMapUnmanaged(NodeId, void), num_points);
-            @memset(node_neighbors, std.AutoArrayHashMapUnmanaged(NodeId, void){});
+            const to_osm_node_neighbors = try arena_alloc.alloc(std.AutoArrayHashMapUnmanaged(NodeId, void), num_points);
+            @memset(to_osm_node_neighbors, std.AutoArrayHashMapUnmanaged(NodeId, void){});
+
+            const transit_to_transit_connections = try arena_alloc.alloc(std.ArrayListUnmanaged(TTConn), num_points - transit_start_id.value);
+            @memset(transit_to_transit_connections, std.ArrayListUnmanaged(TTConn){});
+
+            const osm_to_transit_neighbors = std.AutoHashMap(NodeId, std.ArrayList(NodeId)).init(arena_alloc);
+
             return .{
                 .arena = arena,
-                .node_neighbors = node_neighbors,
+                .to_osm_node_neighbors = to_osm_node_neighbors,
+                .transit_to_transit_connections = transit_to_transit_connections,
+                .transit_start_id = transit_start_id,
+                .osm_to_transit_neighbors = osm_to_transit_neighbors,
             };
         }
 
@@ -127,57 +188,153 @@ pub const NodeAdjacencyMap = struct {
             alloc.destroy(self.arena);
         }
 
-        pub fn feed(self: *Builder, way: Way) !void {
+        pub fn feedToOsm(self: *Builder, way: Way) !void {
             const arena_alloc = self.arena.allocator();
             for (way.node_ids, 0..) |node_id, i| {
                 if (i > 0) {
-                    try self.node_neighbors[node_id.value].put(arena_alloc, way.node_ids[i - 1], {});
+                    try self.to_osm_node_neighbors[node_id.value].put(arena_alloc, way.node_ids[i - 1], {});
                 }
 
                 if (i < way.node_ids.len - 1) {
-                    try self.node_neighbors[node_id.value].put(arena_alloc, way.node_ids[i + 1], {});
+                    try self.to_osm_node_neighbors[node_id.value].put(arena_alloc, way.node_ids[i + 1], {});
                 }
             }
         }
 
+        pub fn feedTransitToTransit(self: *Builder, way: Way, departure_times: []const u32) !void {
+            const arena_alloc = self.arena.allocator();
+            for (0..way.node_ids.len - 1) |i| {
+                const node_id = way.node_ids[i];
+                const neighbor_id = way.node_ids[i + 1];
+                const departure_time = departure_times[i];
+                try self.transit_to_transit_connections[node_id.value - self.transit_start_id.value].append(arena_alloc, .{
+                    .departure_time = departure_time,
+                    .node = neighbor_id,
+                });
+            }
+        }
+
+        pub fn feedOsmToTransit(self: *Builder, way: Way) !void {
+            std.debug.assert(way.node_ids.len == 2);
+
+            const osm_node_id = @min(way.node_ids[0].value, way.node_ids[1].value);
+            const transit_node_id = @max(way.node_ids[0].value, way.node_ids[1].value);
+
+            std.debug.assert(osm_node_id < self.transit_start_id.value);
+            std.debug.assert(transit_node_id >= self.transit_start_id.value);
+
+            const res = try self.osm_to_transit_neighbors.getOrPut(.{ .value = osm_node_id });
+            if (!res.found_existing) {
+                res.value_ptr.* = std.ArrayList(NodeId).init(self.arena.allocator());
+            }
+
+            try res.value_ptr.append(.{ .value = transit_node_id });
+            try self.to_osm_node_neighbors[transit_node_id].put(self.arena.allocator(), .{ .value = osm_node_id }, {});
+        }
+
         pub fn build(self: *Builder) !NodeAdjacencyMap {
-            return try NodeAdjacencyMap.init(self.arena.child_allocator, self.node_neighbors);
+            const alloc = self.arena.child_allocator;
+
+            var to_osm_storage = std.ArrayList(NodeId).init(alloc);
+            defer to_osm_storage.deinit();
+
+            var osm_segment_starts = std.ArrayList(u32).init(alloc);
+            defer osm_segment_starts.deinit();
+
+            var transit_to_transit_node_storage = std.ArrayList(NodeId).init(alloc);
+            defer transit_to_transit_node_storage.deinit();
+
+            var transit_to_transit_time_storage = std.ArrayList(u32).init(alloc);
+            defer transit_to_transit_time_storage.deinit();
+
+            var transit_segment_starts = std.ArrayList(u32).init(alloc);
+            defer transit_segment_starts.deinit();
+
+            for (self.to_osm_node_neighbors) |neighbors| {
+                try osm_segment_starts.append(@intCast(to_osm_storage.items.len));
+                try to_osm_storage.appendSlice(neighbors.keys());
+            }
+            try osm_segment_starts.append(@intCast(to_osm_storage.items.len));
+
+            for (self.transit_to_transit_connections) |connections| {
+                try transit_segment_starts.append(@intCast(transit_to_transit_node_storage.items.len));
+                for (connections.items) |connection| {
+                    try transit_to_transit_node_storage.append(connection.node);
+                    try transit_to_transit_time_storage.append(connection.departure_time);
+                }
+            }
+            try transit_segment_starts.append(@intCast(transit_to_transit_node_storage.items.len));
+
+            // FIXME: errdefers here not quite right
+            var osm_to_transit = std.AutoHashMap(NodeId, []const NodeId).init(alloc);
+            var osm_to_transit_it = self.osm_to_transit_neighbors.iterator();
+            while (osm_to_transit_it.next()) |entry| {
+                const duped = try alloc.dupe(NodeId, entry.value_ptr.items);
+                errdefer alloc.free(duped);
+                try osm_to_transit.put(entry.key_ptr.*, duped);
+            }
+
+            return .{
+                .to_osm_storage = try to_osm_storage.toOwnedSlice(),
+                .osm_segment_starts = try osm_segment_starts.toOwnedSlice(),
+                .transit_segment_starts = try transit_segment_starts.toOwnedSlice(),
+                .transit_to_transit_node_storage = try transit_to_transit_node_storage.toOwnedSlice(),
+                .transit_to_transit_time_storage = try transit_to_transit_time_storage.toOwnedSlice(),
+                .osm_to_transit = osm_to_transit,
+                .transit_start_id = self.transit_start_id,
+            };
         }
     };
 
-    pub fn init(alloc: Allocator, node_neighbors: []std.AutoArrayHashMapUnmanaged(NodeId, void)) !NodeAdjacencyMap {
-        var storage = std.ArrayList(NodeId).init(alloc);
-        defer storage.deinit();
-
-        var segment_starts = std.ArrayList(u32).init(alloc);
-        defer segment_starts.deinit();
-
-        for (node_neighbors) |neighbors| {
-            try segment_starts.append(@intCast(storage.items.len));
-            try storage.appendSlice(neighbors.keys());
+    pub fn deinit(self: *NodeAdjacencyMap, alloc: Allocator) void {
+        alloc.free(self.to_osm_storage);
+        alloc.free(self.osm_segment_starts);
+        alloc.free(self.transit_segment_starts);
+        alloc.free(self.transit_to_transit_node_storage);
+        alloc.free(self.transit_to_transit_time_storage);
+        var it = self.osm_to_transit.valueIterator();
+        while (it.next()) |item| {
+            alloc.free(item.*);
         }
-        try segment_starts.append(@intCast(storage.items.len));
+        self.osm_to_transit.deinit();
+    }
 
-        return .{
-            .storage = try storage.toOwnedSlice(),
-            .segment_starts = try segment_starts.toOwnedSlice(),
+    pub fn getOsmNeighbors(self: *const NodeAdjacencyMap, node: NodeId) []const NodeId {
+        const start = self.osm_segment_starts[node.value];
+        const end = self.osm_segment_starts[node.value + 1];
+
+        return self.to_osm_storage[start..end];
+    }
+
+    pub fn getOsmTransitNeighbors(self: *const NodeAdjacencyMap, node: NodeId) []const NodeId {
+        return self.osm_to_transit.get(node) orelse {
+            return &.{};
         };
     }
 
-    pub fn deinit(self: *NodeAdjacencyMap, alloc: Allocator) void {
-        alloc.free(self.storage);
-        alloc.free(self.segment_starts);
-    }
+    const TransitNeighbors = struct {
+        node_ids: []const NodeId,
+        departure_times: []const u32,
+    };
 
-    pub fn getNeighbors(self: *const NodeAdjacencyMap, node: NodeId) []const NodeId {
-        const start = self.segment_starts[node.value];
-        const end = self.segment_starts[node.value + 1];
+    pub fn getTransitNeighbors(self: *const NodeAdjacencyMap, node: NodeId) TransitNeighbors {
+        if (node.value < self.transit_start_id.value) {
+            return .{
+                .node_ids = &.{},
+                .departure_times = &.{},
+            };
+        }
 
-        return self.storage[start..end];
+        const start = self.transit_segment_starts[node.value - self.transit_start_id.value];
+        const end = self.transit_segment_starts[node.value - self.transit_start_id.value + 1];
+        return .{
+            .node_ids = self.transit_to_transit_node_storage[start..end],
+            .departure_times = self.transit_to_transit_time_storage[start..end],
+        };
     }
 
     pub fn numNodes(self: *const NodeAdjacencyMap) usize {
-        return self.segment_starts.len - 1;
+        return self.osm_segment_starts.len - 1;
     }
 };
 
@@ -447,7 +604,8 @@ pub const NodePairsForParentTagPair = struct {
                 return null;
             }
 
-            const neighbors = self.adjacency_map.getNeighbors(self.node_idx);
+            // FIXME: Do we need transit neighbors?
+            const neighbors = self.adjacency_map.getOsmNeighbors(self.node_idx);
             if (self.neighbor_idx >= neighbors.len) {
                 self.node_idx.value += 1;
                 self.neighbor_idx = 0;
@@ -591,6 +749,7 @@ pub fn parseIndexBuffer(
     point_lookup: PointLookup,
     width: f32,
     height: f32,
+    metadata: *const Metadata,
     index_buffer: []const u32,
 ) !struct { WayLookup, WayBuckets, NodeAdjacencyMap } {
     var ways = WayLookup.Builder.init(alloc, index_buffer);
@@ -600,7 +759,7 @@ pub fn parseIndexBuffer(
     var it = IndexBufferIt.init(index_buffer);
     var way_id: WayId = .{ .value = 0 };
 
-    var node_neighbors = try NodeAdjacencyMap.Builder.init(alloc, point_lookup.numPoints());
+    var node_neighbors = try NodeAdjacencyMap.Builder.init(alloc, point_lookup.numPoints(), .{ .value = metadata.transit_node_start_idx });
     defer node_neighbors.deinit();
 
     while (it.next()) |idx_buf_range| {
@@ -608,7 +767,13 @@ pub fn parseIndexBuffer(
         const way = Way.fromIndexRange(idx_buf_range, index_buffer);
 
         try ways.feed(way);
-        try node_neighbors.feed(way);
+        if (way_id.value < metadata.transit_way_start_idx) {
+            try node_neighbors.feedToOsm(way);
+        } else if (way_id.value < metadata.osm_to_transit_way_start_idx) {
+            try node_neighbors.feedTransitToTransit(way, metadata.transit_trip_times[way_id.value - metadata.transit_way_start_idx]);
+        } else {
+            try node_neighbors.feedOsmToTransit(way);
+        }
 
         for (way.node_ids) |node_id| {
             const gps_pos = point_lookup.get(node_id);

@@ -43,9 +43,12 @@ adjacency_map: NodeAdjacencyMap,
 way_buckets: WayBuckets,
 path_planner: ?PathPlanner = null,
 closest_node: NodeId = NodeId{ .value = 0 },
+transit_trip_times: map_data.TransitTripTimes,
 path_start: ?NodeId = null,
 path_end: ?NodeId = null,
 turning_cost: f32 = 0.0,
+path_start_time: u32 = 0,
+movement_speed: f32 = 1.34112,
 textures: []i32,
 monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
 point_pair_to_parent: map_data.PointPairToWayMap,
@@ -53,6 +56,7 @@ debug_way_finding: bool = false,
 debug_point_neighbors: bool = false,
 debug_path_finding: bool = false,
 debug_parenting: bool = false,
+enable_transit_integration: bool = false,
 
 pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *const Metadata, image_tile_metadata: ImageTileData) !*App {
     const split_data = map_data.MapDataComponents.init(map_data_buf, metadata.*);
@@ -78,9 +82,9 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .aspect = aspect_val,
     };
 
-    const point_lookup = PointLookup{ .points = split_data.point_data };
+    const point_lookup = PointLookup{ .points = split_data.point_data, .first_transit_id = .{ .value = metadata.transit_node_start_idx } };
 
-    const index_buffer_objs = try map_data.parseIndexBuffer(alloc, point_lookup, meter_metdata.width, meter_metdata.height, split_data.index_data);
+    const index_buffer_objs = try map_data.parseIndexBuffer(alloc, point_lookup, meter_metdata.width, meter_metdata.height, metadata, split_data.index_data);
     var way_lookup = index_buffer_objs[0];
     errdefer way_lookup.deinit(alloc);
 
@@ -100,7 +104,14 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
     );
     errdefer point_pair_to_parent.deinit();
 
-    var renderer = Renderer.init(split_data.point_data, split_data.index_data);
+    const transit_trip_times = map_data.TransitTripTimes.init(metadata);
+
+    var renderer = Renderer.init(
+        split_data.point_data,
+        split_data.index_data,
+        @intCast(way_lookup.indexBufferOffset(.{ .value = metadata.transit_way_start_idx }, split_data.index_data)),
+        @intCast(way_lookup.indexBufferOffset(.{ .value = metadata.osm_to_transit_way_start_idx }, split_data.index_data)),
+    );
     renderer.bind().render(view_state);
 
     const texture_renderer = TextureRenderer.init();
@@ -120,6 +131,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .ways = way_lookup,
         .way_buckets = way_buckets,
         .point_pair_to_parent = point_pair_to_parent,
+        .transit_trip_times = transit_trip_times,
         .string_table = string_table,
         .textures = textures,
         // Sibling reference
@@ -234,7 +246,7 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
 
-        const neighbors = self.adjacency_map.getNeighbors(node_id);
+        const neighbors = self.adjacency_map.getOsmNeighbors(node_id);
         if (self.debug_point_neighbors) {
             bound_renderer.inner.point_size.set(10.0);
             bound_renderer.renderPoints(neighbors, Gl.POINTS);
@@ -290,6 +302,15 @@ pub fn render(self: *App) void {
         bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
     }
 
+    const transit_point_size = 1000.0;
+    bound_renderer.inner.point_size.set(transit_point_size * self.view_state.zoom);
+    const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
+    bound_renderer.inner.r.set(0.3);
+    bound_renderer.inner.g.set(0.3);
+    bound_renderer.inner.b.set(1.0);
+    gui.glBindVertexArray(bound_renderer.inner.vao);
+    gui.glDrawArrays(Gl.POINTS, @intCast(self.metadata.transit_node_start_idx), @intCast(len));
+
     bound_renderer.inner.r.set(1.0);
     bound_renderer.inner.g.set(0.0);
     bound_renderer.inner.b.set(0.0);
@@ -318,6 +339,7 @@ pub fn render(self: *App) void {
                 }
             }
 
+            bound_renderer.inner.point_size.set(10.0);
             bound_renderer.inner.r.set(1.0);
             bound_renderer.inner.g.set(0.0);
             bound_renderer.inner.b.set(0.0);
@@ -326,12 +348,12 @@ pub fn render(self: *App) void {
 
         if (pp.final_node) |_| {
             const res = pp.step() catch return orelse return;
-            defer self.alloc.free(res);
+            defer res.deinit(self.alloc);
 
             bound_renderer.inner.r.set(1.0);
             bound_renderer.inner.g.set(0.0);
             bound_renderer.inner.b.set(0.0);
-            bound_renderer.renderPoints(res, Gl.LINE_STRIP);
+            bound_renderer.renderPoints(res.path, Gl.LINE_STRIP);
         }
     }
 }
@@ -348,7 +370,7 @@ pub fn stepPath(self: *App, amount: u32) !void {
     if (self.path_planner) |*pp| {
         for (0..amount) |_| {
             if (try pp.step()) |path| {
-                self.alloc.free(path);
+                path.deinit(self.alloc);
                 return;
             }
         }
@@ -365,7 +387,21 @@ pub fn endPath(self: *App) !void {
 }
 
 fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
-    const new_pp = try PathPlanner.init(self.alloc, &self.points, &self.adjacency_map, &self.monitored_attributes.cost.node_costs, start, end, self.turning_cost, self.monitored_attributes.cost.min_cost_multiplier);
+    const new_pp = try PathPlanner.init(
+        self.alloc,
+        &self.points,
+        &self.ways,
+        &self.adjacency_map,
+        &self.transit_trip_times,
+        &self.monitored_attributes.cost.node_costs,
+        start,
+        end,
+        self.turning_cost,
+        self.monitored_attributes.cost.min_cost_multiplier,
+        self.path_start_time,
+        self.movement_speed,
+        self.enable_transit_integration,
+    );
 
     if (self.path_planner) |*pp| pp.deinit();
     self.path_planner = new_pp;
@@ -376,7 +412,7 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
 
     if (self.path_planner) |*pp| {
         if (pp.run()) |path| {
-            self.alloc.free(path);
+            path.deinit(self.alloc);
         } else |_| {}
     }
 }

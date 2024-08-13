@@ -4,7 +4,7 @@ const Metadata = @import("Metadata.zig");
 const image_tile_data = @import("image_tile_data.zig");
 const Allocator = std.mem.Allocator;
 
-const std_options: std.Options = .{
+pub const std_options = std.Options{
     .log_level = .debug,
 };
 
@@ -415,7 +415,11 @@ const Ui = struct {
     debug_point_neighbors: bool = false,
     debug_way_finding: bool = false,
     debug_parenting: bool = false,
+    path_start_time: c_int = 0,
+    enable_transit_integration: bool = false,
     step_amount: c_int = 1,
+    // FIXME: Duped defaults
+    movement_speed: f32 = 1.34112,
     color_picker_id: ?usize = null,
     turning_cost: f32 = 0,
 
@@ -493,9 +497,12 @@ const Ui = struct {
         debug_point_neighbors: ?bool = null,
         debug_way_finding: ?bool = null,
         debug_parenting: ?bool = null,
+        enable_transit_integration: ?bool = null,
         add_monitored_attribute: ?struct { k: [*]const u8, v: [*]const u8 } = null,
         remove_monitored_attribute: ?usize = null,
         update_cost_multiplier: ?struct { id: usize, value: f32 } = null,
+        path_start_time: ?c_int = null,
+        movement_speed: ?f32 = null,
         consumed_mouse_input: bool = false,
         turning_cost: ?f32 = null,
         update_color: ?struct { id: usize, color: [3]f32 } = null,
@@ -545,6 +552,10 @@ const Ui = struct {
             ret.debug_parenting = self.debug_parenting;
         }
 
+        if (c.igCheckbox("Enable transit integration", &self.enable_transit_integration)) {
+            ret.enable_transit_integration = self.enable_transit_integration;
+        }
+
         if (c.igBeginTable("tags", 4, 0, .{ .x = overlay_width, .y = 0 }, 0)) {
             c.igTableSetupColumn("", c.ImGuiTableColumnFlags_WidthFixed, overlay_width - 240, 0);
             c.igTableSetupColumn("", c.ImGuiTableColumnFlags_WidthFixed, 100.0, 0);
@@ -586,6 +597,14 @@ const Ui = struct {
 
         ret.start_path_planning = c.igButton("Set path start", .{ .x = 0, .y = 0 });
         ret.end_path_planning = c.igButton("Set path end", .{ .x = 0, .y = 0 });
+
+        if (c.igInputInt("Path start time (s since midnight)", &self.path_start_time, 0, 0, 0)) {
+            ret.path_start_time = self.path_start_time;
+        }
+
+        if (c.igInputFloat("Movement speed", &self.movement_speed, 0, 0, "%.3f", 0)) {
+            ret.movement_speed = self.movement_speed;
+        }
 
         _ = c.igInputInt("step amount", &self.step_amount, 0, 0, 0);
         self.step_amount = @max(0, self.step_amount);
@@ -656,6 +675,10 @@ fn handleUiActions(app: *App, actions: Ui.RequestedActions) !void {
         app.debug_parenting = value;
     }
 
+    if (actions.enable_transit_integration) |value| {
+        app.enable_transit_integration = value;
+    }
+
     if (actions.add_monitored_attribute) |value| {
         try app.monitorWayAttribute(value.k, value.v);
     }
@@ -666,6 +689,14 @@ fn handleUiActions(app: *App, actions: Ui.RequestedActions) !void {
 
     if (actions.update_cost_multiplier) |value| {
         try app.monitored_attributes.cost.update(value.id, value.value);
+    }
+
+    if (actions.path_start_time) |t| {
+        app.path_start_time = @intCast(t);
+    }
+
+    if (actions.movement_speed) |s| {
+        app.movement_speed = s;
     }
 
     if (actions.update_color) |value| {

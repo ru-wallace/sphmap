@@ -62,13 +62,20 @@
       <br />
       <input type="checkbox" id="debug_parenting" />
       <label for="debug_parenting">Debug parenting</label>
+      <br />
+      <input type="checkbox" id="enable_transit_integration" />
+      <label for="enable_transit_integration">Enable transit integration</label>
       <div id="monitored"></div>
-      <input type="number" id="turning_cost" />
+      <input type="number" id="movement_speed" value="1.0" />
+      <label for="movement_speed">Movement speed</label>
+      <input type="number" id="start_time" value="0" />
+      <label for="start_time">Path start time</label>
+      <input type="number" id="turning_cost" value="0" />
       <label for="turning_cost">Turning cost</label>
       <br />
       <button id="start_path">Set path start</button>
       <button id="end_path">Set path end</button>
-      <input type="number" id="num_steps" />
+      <input type="number" id="num_steps" value="1" />
       <label for="num_steps">Number of steps</label>
       <button id="step_path">Step path</button>
     </div>

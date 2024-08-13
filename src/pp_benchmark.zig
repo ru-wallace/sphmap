@@ -8,6 +8,10 @@ const Allocator = std.mem.Allocator;
 const Way = map_data.Way;
 const WayLookup = map_data.WayLookup;
 
+pub const std_options = std.Options{
+    .log_level = .debug,
+};
+
 const Args = struct {
     const AttributeCost = struct {
         k: []const u8,
@@ -33,7 +37,10 @@ const Args = struct {
     map_data_json: []const u8,
     num_iters: usize,
     turning_cost: f32,
+    path_start_time: u32,
+    movement_speed: f32,
     attribute_costs: []const AttributeCost,
+    enable_transit_integration: bool,
     it: std.process.ArgIterator,
 
     const Option = enum {
@@ -43,7 +50,10 @@ const Args = struct {
         @"--end-id",
         @"--num-iters",
         @"--turning-cost",
+        @"--movement-speed",
+        @"--path-start-time",
         @"--attribute-cost",
+        @"--enable-transit-integration",
         @"--help",
     };
 
@@ -58,6 +68,9 @@ const Args = struct {
         var map_data_bin: ?[]const u8 = null;
         var map_data_json: ?[]const u8 = null;
         var turning_cost: ?f32 = null;
+        var path_start_time: u32 = 0;
+        var movement_speed: f32 = 1.2;
+        var enable_transit_integration = false;
         var attribute_costs = std.ArrayList(AttributeCost).init(alloc);
         defer attribute_costs.deinit();
         var num_iters: usize = 5;
@@ -109,12 +122,29 @@ const Args = struct {
                         help(process_name);
                     };
                 },
+                .@"--path-start-time" => {
+                    const path_start_time_s = getArg(&it, opt, process_name);
+                    path_start_time = std.fmt.parseInt(u32, path_start_time_s, 10) catch {
+                        std.debug.print("{s} is not a valid u32\n", .{path_start_time_s});
+                        help(process_name);
+                    };
+                },
+                .@"--movement-speed" => {
+                    const movement_speed_s = getArg(&it, opt, process_name);
+                    movement_speed = std.fmt.parseFloat(f32, movement_speed_s) catch {
+                        std.debug.print("{s} is not a valid f32\n", .{movement_speed_s});
+                        help(process_name);
+                    };
+                },
                 .@"--attribute-cost" => {
                     const attribute_cost = AttributeCost.parse(&it) catch |e| {
                         std.debug.print("Failed to parse attribute cost args {s}\n", .{@errorName(e)});
                         help(process_name);
                     };
                     try attribute_costs.append(attribute_cost);
+                },
+                .@"--enable-transit-integration" => {
+                    enable_transit_integration = true;
                 },
                 .@"--help" => {
                     help(process_name);
@@ -129,6 +159,9 @@ const Args = struct {
             .map_data_json = unwrapArg(map_data_json, Option.@"--map-data-json", process_name),
             .num_iters = num_iters,
             .turning_cost = unwrapArg(turning_cost, Option.@"--turning-cost", process_name),
+            .path_start_time = path_start_time,
+            .movement_speed = movement_speed,
+            .enable_transit_integration = enable_transit_integration,
             .attribute_costs = try attribute_costs.toOwnedSlice(),
             .it = it,
         };
@@ -178,8 +211,17 @@ const Args = struct {
                 .@"--turning-cost" => {
                     std.debug.print("[turning cost]", .{});
                 },
+                .@"--path-start-time" => {
+                    std.debug.print("[seconds since midnight] OPTIONAL", .{});
+                },
+                .@"--movement-speed" => {
+                    std.debug.print("[m/s] OPTIONAL", .{});
+                },
                 .@"--attribute-cost" => {
                     std.debug.print("[attr_key] [attr_value] [cost]", .{});
+                },
+                .@"--enable-transit-integration" => {
+                    std.debug.print("Enables transit integration", .{});
                 },
                 .@"--help" => {
                     std.debug.print("Show this help", .{});
@@ -219,14 +261,17 @@ pub fn main() !void {
 
     const meter_metadata = map_data.latLongToMeters(split_data.point_data, parsed.value);
 
-    const point_lookup = map_data.PointLookup{ .points = split_data.point_data };
+    const point_lookup = map_data.PointLookup{ .points = split_data.point_data, .first_transit_id = .{ .value = parsed.value.transit_node_start_idx } };
+
     const elems = try map_data.parseIndexBuffer(
         alloc,
         point_lookup,
         meter_metadata.width,
         meter_metadata.height,
+        &parsed.value,
         split_data.index_data,
     );
+
     var way_lookup = elems[0];
     defer way_lookup.deinit(alloc);
 
@@ -258,24 +303,31 @@ pub fn main() !void {
         try cost_tracker.update(id, cost.cost);
     }
 
+    var node_costs = map_data.NodePairCostMultiplierMap.init(alloc);
+    defer node_costs.deinit();
+
+    const transit_trip_times = map_data.TransitTripTimes.init(&parsed.value);
+
     const start = try std.time.Instant.now();
     for (0..args.num_iters) |_| {
-        var pp = try PathPlanner.init(
-            alloc,
-            &point_lookup,
-            &adjacency_map,
-            &cost_tracker.node_costs,
-            args.start,
-            args.end,
-            args.turning_cost,
-            1.0,
-        );
+        var pp = try PathPlanner.init(alloc, &point_lookup, &way_lookup, &adjacency_map, &transit_trip_times, &node_costs, args.start, args.end, args.turning_cost, 1.0, args.path_start_time, args.movement_speed, args.enable_transit_integration);
         defer pp.deinit();
 
         const path = try pp.run();
-        alloc.free(path);
+        defer path.deinit(alloc);
+
+        var took_transit = false;
+        for (path.path) |node| {
+            if (node.value >= parsed.value.transit_node_start_idx) {
+                took_transit = true;
+            }
+        }
+
+        std.debug.print("Transit node start: {}\n", .{parsed.value.transit_node_start_idx});
+        std.debug.print("Took transit: {}\n", .{took_transit});
+        std.debug.print("Trip took {d} seconds\n", .{path.time});
     }
     const end = try std.time.Instant.now();
 
-    std.debug.print("average pp time: {d}\n", .{end.since(start) / 1000 / 1000 / args.num_iters});
+    std.debug.print("average pp time: {d}ms\n", .{end.since(start) / 1000 / 1000 / args.num_iters});
 }

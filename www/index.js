@@ -476,6 +476,13 @@ function hookupCheckbox(elem, fn) {
   fn(elem.checked);
 }
 
+function hookupInput(elem, fn) {
+  elem.oninput = (ev) => {
+    fn(ev.target.value);
+  };
+  fn(elem.value);
+}
+
 async function init() {
   const canvas = initCanvas();
   const tags_div = document.getElementById("tags");
@@ -510,6 +517,11 @@ async function init() {
     mod.instance.exports.setDebugParenting,
   );
 
+  hookupCheckbox(
+    document.getElementById("enable_transit_integration"),
+    mod.instance.exports.setEnableTransitIntegration,
+  );
+
   const canvas_callbacks = new CanvasInputHandler(gl, canvas, mod);
   canvas_callbacks.setCanvasCallbacks();
   mod.instance.exports.render();
@@ -530,10 +542,20 @@ async function init() {
     mod.instance.exports.stepPath(num_steps.value);
   };
 
-  const turning_cost = document.getElementById("turning_cost");
-  turning_cost.oninput = (ev) => {
-    mod.instance.exports.setTurningCost(ev.target.value);
-  };
+  hookupInput(
+    document.getElementById("turning_cost"),
+    mod.instance.exports.setTurningCost,
+  );
+
+  hookupInput(
+    document.getElementById("start_time"),
+    mod.instance.exports.setStartTime,
+  );
+
+  hookupInput(
+    document.getElementById("movement_speed"),
+    mod.instance.exports.setMovementSpeed,
+  );
 }
 
 window.onload = init;

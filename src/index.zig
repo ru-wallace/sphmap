@@ -126,6 +126,21 @@ pub export fn setDebugParenting(val: bool) void {
     global.app.render();
 }
 
+pub export fn setEnableTransitIntegration(val: bool) void {
+    global.app.enable_transit_integration = val;
+    global.app.render();
+}
+
+pub export fn setStartTime(val: u32) void {
+    global.app.path_start_time = val;
+    global.app.render();
+}
+
+pub export fn setMovementSpeed(val: f32) void {
+    global.app.movement_speed = val;
+    global.app.render();
+}
+
 pub export fn startPath() void {
     global.app.startPath() catch |e| {
         std.log.err("Failed to start path: {s}", .{@errorName(e)});
