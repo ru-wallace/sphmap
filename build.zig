@@ -7,10 +7,13 @@ const Builder = struct {
     wasm_target: std.Build.ResolvedTarget,
     check_step: *std.Build.Step,
     wasm_step: *std.Build.Step,
+    lto: ?bool,
 
     fn init(b: *std.Build) Builder {
         const check_step = b.step("check", "check");
         const wasm_step = b.step("wasm", "wasm");
+        const lto = b.option(bool, "lto", "");
+
         return .{
             .b = b,
             .opt = b.standardOptimizeOption(.{}),
@@ -20,6 +23,7 @@ const Builder = struct {
             ) catch unreachable),
             .check_step = check_step,
             .wasm_step = wasm_step,
+            .lto = lto,
         };
     }
 
@@ -100,6 +104,11 @@ const Builder = struct {
         exe.linkSystemLibrary("glfw");
         exe.linkLibC();
         exe.linkLibCpp();
+
+        if (self.lto) |val| {
+            exe.want_lto = val;
+        }
+
         _ = self.installAndCheck(exe);
     }
 
