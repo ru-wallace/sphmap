@@ -1,0 +1,6 @@
+route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+6612,1,13861602,2 Macdonald/To Burrard Station,,0,2089932,289543,0,1
+6612,1,13861603,2 Macdonald/To Burrard Station,,0,2089934,289543,0,1
+6612,1,13861604,2 Macdonald/To Burrard Station,,0,2089931,289543,0,1
+6612,1,13861605,2 Macdonald/To Burrard Station,,0,2089940,289543,0,1
+HD,-999,48441,,,0,NA,4484,2,0

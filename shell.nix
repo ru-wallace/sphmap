@@ -23,6 +23,9 @@ pkgs.mkShell {
     glfw
     wayland
     pkg-config
+    sqlite
+    sqlitebrowser
+    zip
   ];
 
   LD_LIBRARY_PATH = "${wayland}/lib";

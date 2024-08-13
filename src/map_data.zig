@@ -488,6 +488,22 @@ pub fn wayTagsContains(tags: Metadata.Tags, k: usize, v: usize) bool {
     return false;
 }
 
+pub fn isSidewalkParentCandidate(tags: Metadata.Tags, sidewalk_key: usize, sidewalk_val: usize) bool {
+    var found_highway = false;
+    for (0..tags[0].len) |i| {
+        const tag_k = tags[0][i];
+        const tag_v = tags[1][i];
+
+        if (tag_k == sidewalk_key and tag_v == sidewalk_val) {
+            return false;
+        } else if (tag_k == sidewalk_key) {
+            found_highway = true;
+        }
+    }
+
+    return found_highway;
+}
+
 fn wayParentScore(way: Way, point_lookup: *const PointLookup, a: Point, b: Point) f32 {
     var min_score = std.math.inf(f32);
 
@@ -550,7 +566,7 @@ pub fn findSidewalkStreets(
             var min_way_score = std.math.inf(f32);
             for (bucket) |other_way_id| {
                 const other_way_tags = metadata.way_tags[other_way_id.value];
-                if (wayTagsContains(other_way_tags, sidewalk_k, sidewalk_v)) {
+                if (!isSidewalkParentCandidate(other_way_tags, sidewalk_k, sidewalk_v)) {
                     continue;
                 }
 
