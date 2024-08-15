@@ -310,7 +310,7 @@ pub fn main() !void {
 
     const start = try std.time.Instant.now();
     for (0..args.num_iters) |_| {
-        var pp = try PathPlanner.init(alloc, &point_lookup, &way_lookup, &adjacency_map, &transit_trip_times, &node_costs, args.start, args.end, args.turning_cost, 1.0, args.path_start_time, args.movement_speed, args.enable_transit_integration);
+        var pp = try PathPlanner.init(alloc, &point_lookup, &way_lookup, &adjacency_map, &transit_trip_times, &node_costs, meter_metadata, args.start, args.end, args.turning_cost, 1.0, args.path_start_time, args.movement_speed, args.enable_transit_integration);
         defer pp.deinit();
 
         const path = try pp.run();

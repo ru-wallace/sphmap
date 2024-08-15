@@ -22,9 +22,13 @@ pub export fn glCreateVertexArray() i32 {
     return newId();
 }
 
+pub export fn glDeleteVertexArray(_: i32) void {}
+
 pub export fn glCreateBuffer() i32 {
     return newId();
 }
+
+pub export fn glDeleteBuffer(_: i32) void {}
 
 pub export fn glVertexAttribPointer(index: i32, size: i32, typ: i32, normalized: bool, stride: i32, offs: i32) void {
     _ = index;
@@ -140,6 +144,26 @@ pub export fn pushMonitoredAttribute(id: usize, key: [*]const u8, key_len: usize
     _ = key_len;
     _ = val;
     _ = val_len;
+}
+
+pub export fn glCreateTexture() i32 {
+    return newId();
+}
+
+pub export fn glTexParameteri(target: i32, param: i32, val: i32) void {
+    _ = target;
+    _ = param;
+    _ = val;
+}
+
+pub export fn glTexImage2D(target: i32, level: i32, internalformat: i32, typ: i32, ptr: [*]const u8, width: usize, height: usize) void {
+    _ = target;
+    _ = level;
+    _ = internalformat;
+    _ = typ;
+    _ = ptr;
+    _ = width;
+    _ = height;
 }
 
 fn readFileData(alloc: Allocator, p: []const u8) ![]u8 {

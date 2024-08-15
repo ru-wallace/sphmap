@@ -44,8 +44,12 @@ pub const Vec = struct {
         };
     }
 
+    pub fn length_2(self: Vec) f32 {
+        return self.x * self.x + self.y * self.y;
+    }
+
     pub fn length(self: Vec) f32 {
-        return @sqrt(self.x * self.x + self.y * self.y);
+        return @sqrt(self.length_2());
     }
 
     pub fn normal(self: Vec) Vec {

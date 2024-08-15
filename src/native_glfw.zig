@@ -56,6 +56,11 @@ pub export fn glCreateVertexArray() i32 {
     return @bitCast(ret);
 }
 
+pub export fn glDeleteVertexArray(id: i32) void {
+    const id_c: c_uint = @bitCast(id);
+    c.glDeleteVertexArrays(1, &id_c);
+}
+
 pub export fn glCreateBuffer() i32 {
     var ret: u32 = undefined;
     c.glGenBuffers(1, &ret);
@@ -150,6 +155,20 @@ pub export fn pushTag(key: [*]const u8, key_len: usize, val: [*]const u8, val_le
 
 pub export fn setNodeId(id: usize) void {
     Ui.globals.node_id = @intCast(id);
+}
+
+pub export fn glCreateTexture() i32 {
+    var tex: c.GLuint = undefined;
+    c.glGenTextures(1, &tex);
+    return @bitCast(tex);
+}
+
+pub export fn glTexParameteri(target: i32, param: i32, val: i32) void {
+    c.glTexParameteri(@bitCast(target), @bitCast(param), val);
+}
+
+pub export fn glTexImage2D(target: i32, level: i32, internalformat: i32, typ: i32, ptr: [*]const u8, width: usize, height: usize) void {
+    c.glTexImage2D(@bitCast(target), level, internalformat, @intCast(width), @intCast(height), 0, c.GL_RGBA, @intCast(typ), ptr);
 }
 
 const TextureQueue = struct {
@@ -811,6 +830,7 @@ pub fn main() !void {
     var ui = try Ui.init(alloc, glfw.window);
     defer ui.deinit();
 
+    enableGlDebug();
     texture_queue = TextureQueue.init(alloc);
     defer texture_queue.deinit();
 

@@ -9,6 +9,7 @@ const Renderer = @import("Renderer.zig");
 const TextureRenderer = @import("TextureRenderer.zig");
 const gl_utils = @import("gl_utils.zig");
 const monitored_attributes = @import("monitored_attributes.zig");
+const HeuristicRenderer = @import("HeuristicRenderer.zig");
 const Gl = gl_utils.Gl;
 const image_tile_data = @import("image_tile_data.zig");
 const ImageTileData = image_tile_data.ImageTileData;
@@ -23,7 +24,7 @@ const Way = map_data.Way;
 const WayId = map_data.WayId;
 const StringTable = map_data.StringTable;
 const gui = @import("gui_bindings.zig");
-const ViewState = Renderer.ViewState;
+const ViewState = gl_utils.ViewState;
 const WaysForTagPair = map_data.WaysForTagPair;
 const WayBuckets = map_data.WayBuckets;
 
@@ -32,8 +33,10 @@ const App = @This();
 alloc: Allocator,
 mouse_tracker: MouseTracker = .{},
 metadata: *const Metadata,
+meter_metadata: map_data.MeterMetadata,
 image_tile_metadata: ImageTileData,
 renderer: Renderer,
+heuristic_renderer: HeuristicRenderer,
 texture_renderer: TextureRenderer,
 view_state: ViewState,
 points: PointLookup,
@@ -115,6 +118,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
     renderer.bind().render(view_state);
 
     const texture_renderer = TextureRenderer.init();
+    const heuristic_renderer = HeuristicRenderer.init(meter_metdata);
 
     const ret = try alloc.create(App);
     errdefer alloc.destroy(ret);
@@ -125,7 +129,9 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .image_tile_metadata = image_tile_metadata,
         .renderer = renderer,
         .texture_renderer = texture_renderer,
+        .heuristic_renderer = heuristic_renderer,
         .metadata = metadata,
+        .meter_metadata = meter_metdata,
         .view_state = view_state,
         .points = point_lookup,
         .ways = way_lookup,
@@ -292,7 +298,7 @@ pub fn render(self: *App) void {
         );
     }
 
-    const bound_renderer = self.renderer.bind();
+    var bound_renderer = self.renderer.bind();
     bound_renderer.render(self.view_state);
 
     for (self.monitored_attributes.rendering.attributes.items) |monitored| {
@@ -302,7 +308,20 @@ pub fn render(self: *App) void {
         bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
     }
 
-    const transit_point_size = 1000.0;
+    if (self.path_planner) |*pp| {
+        if (self.debug_path_finding and pp.transit_state == .some) {
+            // FIXME: Bad panic
+            self.heuristic_renderer.feed(self.alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
+
+            var bound = self.heuristic_renderer.bind();
+            bound.render(self.view_state);
+
+            bound_renderer = self.renderer.bind();
+        }
+    }
+
+    bound_renderer = self.renderer.bind();
+    const transit_point_size = 10000.0;
     bound_renderer.inner.point_size.set(transit_point_size * self.view_state.zoom);
     const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
     bound_renderer.inner.r.set(0.3);
@@ -394,6 +413,7 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
         &self.adjacency_map,
         &self.transit_trip_times,
         &self.monitored_attributes.cost.node_costs,
+        self.meter_metadata,
         start,
         end,
         self.turning_cost,

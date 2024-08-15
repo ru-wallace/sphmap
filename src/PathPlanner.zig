@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const PointLookup = map_data.PointLookup;
 const NodeAdjacencyMap = map_data.NodeAdjacencyMap;
 const NodeId = map_data.NodeId;
+const ClosestStopLookup = @import("ClosestStopLookup.zig");
 const lin = @import("lin.zig");
 const Point = lin.Point;
 const Vec = lin.Vec;
@@ -144,9 +145,9 @@ const TripList = struct {
         return false;
     }
 
-    fn markVisited(self: *TripList, node: NodeId) !void {
+    fn markVisited(self: *TripList, node: NodeId) !bool {
         if (!self.stops.contains(node)) {
-            return;
+            return false;
         }
 
         var i: usize = 0;
@@ -165,6 +166,7 @@ const TripList = struct {
         }
 
         self.updateStops() catch @panic("rollback unimplemented so we crash sorry");
+        return true;
     }
 
     fn updateStops(self: *TripList) !void {
@@ -190,6 +192,7 @@ const TransitState = union(enum) {
     some: struct {
         trip_list: TripList,
         trip_times: *const TransitTripTimes,
+        closest_stop_lookup: ClosestStopLookup,
     },
 
     fn deinit(self: *TransitState) void {
@@ -198,13 +201,16 @@ const TransitState = union(enum) {
         }
 
         self.some.trip_list.deinit();
+        self.some.closest_stop_lookup.deinit();
     }
 
     fn markVisited(self: *TransitState, node_id: NodeId) !void {
         switch (self.*) {
             .none => {},
             .some => |*state| {
-                try state.trip_list.markVisited(node_id);
+                if (try state.trip_list.markVisited(node_id)) {
+                    state.closest_stop_lookup.updateStops(state.trip_list.getTripStops());
+                }
             },
         }
     }
@@ -250,6 +256,7 @@ pub fn init(
     adjacency_map: *const NodeAdjacencyMap,
     transit_trip_times: *const TransitTripTimes,
     node_costs: *const map_data.NodePairCostMultiplierMap,
+    meter_metadata: map_data.MeterMetadata,
     start: NodeId,
     end: NodeId,
     turning_cost: f32,
@@ -279,10 +286,18 @@ pub fn init(
     var transit_state: TransitState = .none;
 
     if (enable_transit_integration) {
+        var trip_list = try TripList.init(alloc, trips, way_lookup, path_start_time, transit_trip_times.*, points.first_transit_id, points.numTransitPoints());
+        errdefer trip_list.deinit();
+
+        const stops = trip_list.getTripStops();
+        const closest_stop_lookup = try ClosestStopLookup.init(alloc, stops, points, meter_metadata.width, meter_metadata.height);
+        errdefer closest_stop_lookup.deinit();
+
         transit_state = .{
             .some = .{
-                .trip_list = try TripList.init(alloc, trips, way_lookup, path_start_time, transit_trip_times.*, points.first_transit_id, points.numTransitPoints()),
+                .trip_list = trip_list,
                 .trip_times = transit_trip_times,
+                .closest_stop_lookup = closest_stop_lookup,
             },
         };
     }
@@ -335,12 +350,20 @@ fn heuristicDistance(self: *PathPlanner, id: NodeId) f32 {
         return self.distance(id, self.end);
     }
 
-    const stops = self.transit_state.some.trip_list.getTripStops();
-    var min_dist = self.distance(id, self.end);
-    for (stops) |stop| {
-        min_dist = @min(self.distance(id, stop), min_dist);
-    }
-    return min_dist;
+    //const old_val = blk: {
+    //    const stops = self.transit_state.some.trip_list.getTripStops();
+    //    var min_dist = self.distance(id, self.end);
+    //    for (stops) |stop| {
+    //        min_dist = @min(self.distance(id, stop), min_dist);
+    //    }
+    //    break :blk min_dist;
+    //};
+
+    const pos = self.points.get(id);
+    const new_val = @min(self.distance(id, self.end), self.transit_state.some.closest_stop_lookup.getDistance(pos));
+
+    //std.log.debug("old: {d}, new: {d}", .{old_val, new_val});
+    return new_val;
 }
 
 fn order(_: void, a: NodeWithFscore, b: NodeWithFscore) std.math.Order {
