@@ -90,8 +90,16 @@ class WasmHandler {
     return this.gl_objects.push(this.gl.createVertexArray());
   }
 
+  glDeleteVertexArray(id) {
+    const obj = this.gl_objects.get(id);
+    this.gl.deleteVertexArray(obj);
+    this.gl_objects.remove(id);
+  }
+
   glCreateBuffer() {
-    return this.gl_objects.push(this.gl.createBuffer());
+    const ret = this.gl_objects.push(this.gl.createBuffer());
+    console.log(ret, this.gl_objects.get(ret));
+    return ret;
   }
 
   glDeleteBuffer(id) {
@@ -142,6 +150,40 @@ class WasmHandler {
     this.gl.bindTexture(target, tex_obj);
   }
 
+  glCreateTexture() {
+    const texture = this.gl.createTexture();
+    return this.gl_objects.push(texture);
+  }
+
+  glTexParameteri(target, param, val) {
+    this.gl.texParameteri(target, param, val);
+  }
+
+  glTexImage2D(target, level, internalformat, type, ptr, width, height) {
+    const buf = new Float32Array(this.memory.buffer, ptr, width * height * 4);
+    this.gl.texParameteri(
+      this.gl.TEXTURE_2D,
+      this.gl.TEXTURE_MIN_FILTER,
+      this.gl.NEAREST,
+    );
+    this.gl.texParameteri(
+      this.gl.TEXTURE_2D,
+      this.gl.TEXTURE_MAG_FILTER,
+      this.gl.NEAREST,
+    );
+    this.gl.texImage2D(
+      target,
+      level,
+      internalformat,
+      width,
+      height,
+      0,
+      this.gl.RGBA,
+      type,
+      buf,
+    );
+  }
+
   setupTexture(image) {
     const texture = this.gl.createTexture();
     this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
@@ -175,7 +217,6 @@ class WasmHandler {
       this.gl.UNSIGNED_BYTE,
       image,
     );
-    this.gl.generateMipmap(this.gl.TEXTURE_2D);
 
     return this.gl_objects.push(texture);
   }
@@ -313,6 +354,8 @@ async function instantiateWasmModule(wasm_handlers) {
       compileLinkProgram: wasm_handlers.compileLinkProgram.bind(wasm_handlers),
       bind2DFloat32Data: wasm_handlers.bind2DFloat32Data.bind(wasm_handlers),
       glBindVertexArray: wasm_handlers.glBindVertexArray.bind(wasm_handlers),
+      glDeleteVertexArray:
+        wasm_handlers.glDeleteVertexArray.bind(wasm_handlers),
       glCreateBuffer: wasm_handlers.glCreateBuffer.bind(wasm_handlers),
       glDeleteBuffer: wasm_handlers.glDeleteBuffer.bind(wasm_handlers),
       glBindBuffer: wasm_handlers.glBindBuffer.bind(wasm_handlers),
@@ -334,6 +377,9 @@ async function instantiateWasmModule(wasm_handlers) {
       glUniform1i: wasm_handlers.glUniform1i.bind(wasm_handlers),
       glActiveTexture: (...args) => wasm_handlers.gl.activeTexture(...args),
       glBindTexture: wasm_handlers.glBindTexture.bind(wasm_handlers),
+      glCreateTexture: wasm_handlers.glCreateTexture.bind(wasm_handlers),
+      glTexParameteri: wasm_handlers.glTexParameteri.bind(wasm_handlers),
+      glTexImage2D: wasm_handlers.glTexImage2D.bind(wasm_handlers),
       clearTags: wasm_handlers.clearTags.bind(wasm_handlers),
       pushTag: wasm_handlers.pushTag.bind(wasm_handlers),
       clearMonitoredAttributes:
@@ -462,6 +508,8 @@ class CanvasInputHandler {
 function makeGl(canvas) {
   const gl = canvas.getContext("webgl2");
 
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.BLEND);
   if (gl === null) {
     throw new Error("Failed to initialize gl context");
   }

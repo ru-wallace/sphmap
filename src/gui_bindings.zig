@@ -1,5 +1,6 @@
 pub extern fn compileLinkProgram(vs: [*]const u8, vs_len: usize, fs: [*]const u8, fs_len: usize) i32;
 pub extern fn glCreateVertexArray() i32;
+pub extern fn glDeleteVertexArray(id: i32) void;
 pub extern fn glCreateBuffer() i32;
 pub extern fn glDeleteBuffer(id: i32) void;
 pub extern fn glVertexAttribPointer(index: i32, size: i32, type: i32, normalized: bool, stride: i32, offs: i32) void;
@@ -18,6 +19,9 @@ pub extern fn glUniform2f(loc: i32, a: f32, b: f32) void;
 pub extern fn glUniform1i(loc: i32, val: i32) void;
 pub extern fn glActiveTexture(val: i32) void;
 pub extern fn glBindTexture(target: i32, val: i32) void;
+pub extern fn glCreateTexture() i32;
+pub extern fn glTexParameteri(target: i32, param: i32, val: i32) void;
+pub extern fn glTexImage2D(target: i32, level: i32, internalformat: i32, typ: i32, ptr: [*]const u8, width: usize, height: usize) void;
 
 pub extern fn clearTags() void;
 pub extern fn pushTag(key: [*]const u8, key_len: usize, val: [*]const u8, val_len: usize) void;

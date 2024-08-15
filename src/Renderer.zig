@@ -2,6 +2,7 @@ const std = @import("std");
 const gui = @import("gui_bindings.zig");
 const lin = @import("lin.zig");
 const gl_utils = @import("gl_utils.zig");
+const ViewState = gl_utils.ViewState;
 const FloatUniform = gl_utils.FloatUniform;
 const Gl = gl_utils.Gl;
 const map_data = @import("map_data.zig");
@@ -86,12 +87,6 @@ pub fn bind(self: *Renderer) BoundRenderer {
         .inner = self,
     };
 }
-
-pub const ViewState = struct {
-    center: MapPos,
-    zoom: f32,
-    aspect: f32,
-};
 
 const vs_source = @embedFile("vertex.glsl");
 const fs_source = @embedFile("fragment.glsl");
