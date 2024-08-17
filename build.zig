@@ -7,12 +7,14 @@ const Builder = struct {
     wasm_target: std.Build.ResolvedTarget,
     check_step: *std.Build.Step,
     wasm_step: *std.Build.Step,
+    pp_step: *std.Build.Step,
     lto: ?bool,
 
     fn init(b: *std.Build) Builder {
         const check_step = b.step("check", "check");
         const wasm_step = b.step("wasm", "wasm");
         const lto = b.option(bool, "lto", "");
+        const pp_step = b.step("pp_benchmark", "");
 
         return .{
             .b = b,
@@ -23,6 +25,7 @@ const Builder = struct {
             ) catch unreachable),
             .check_step = check_step,
             .wasm_step = wasm_step,
+            .pp_step = pp_step,
             .lto = lto,
         };
     }
@@ -120,7 +123,8 @@ const Builder = struct {
             .target = self.target,
             .optimize = self.opt,
         });
-        _ = self.installAndCheck(exe);
+        const artifact = self.installAndCheck(exe);
+        self.pp_step.dependOn(&artifact.step);
     }
 };
 
