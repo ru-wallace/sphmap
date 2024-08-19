@@ -22,6 +22,25 @@
         height: 100%;
       }
 
+      #search_overlay {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        width: 350px;
+        background-color: rgba(0, 0, 0, 0.7);
+        padding: 5px;
+        color: white;
+      }
+
+      #search_overlay input {
+        /* FIXME: WTF are we doing hardcoding width instead of using relative */
+        width: 345px;
+      }
+
+      .selected_search {
+        background-color: #3333ff;
+      }
+
       #overlay {
         position: absolute;
         bottom: 20px;
@@ -48,6 +67,10 @@
   </head>
   <body>
     <canvas id="canvas"></canvas>
+    <div id="search_overlay">
+      <input type="text" id="search" />
+      <div id="search_results"></div>
+    </div>
     <div id="overlay">
       <div id="tags"></div>
       <div id="node_id"></div>

@@ -28,5 +28,7 @@ pub extern fn pushTag(key: [*]const u8, key_len: usize, val: [*]const u8, val_le
 pub extern fn setNodeId(id: usize) void;
 pub extern fn clearMonitoredAttributes() void;
 pub extern fn pushMonitoredAttribute(id: usize, key: [*]const u8, key_len: usize, val: [*]const u8, val_len: usize) void;
+pub extern fn resetSearchResults() void;
+pub extern fn pushSearchResult(id: usize, name: [*]const u8, name_len: usize) void;
 
 pub extern fn fetchTexture(id: usize, url: [*]const u8, url_len: usize) void;

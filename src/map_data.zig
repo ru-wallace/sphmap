@@ -537,13 +537,15 @@ pub const CoordinateSpaceConverter = struct {
 pub const MapDataComponents = struct {
     point_data: []f32,
     index_data: []const u32,
+    business_data: []f32,
     string_table_data: []const u8,
 
     pub fn init(data: []u8, metadata: Metadata) MapDataComponents {
         return .{
             .point_data = @alignCast(std.mem.bytesAsSlice(f32, data[0..@intCast(metadata.end_nodes)])),
             .index_data = @alignCast(std.mem.bytesAsSlice(u32, data[@intCast(metadata.end_nodes)..@intCast(metadata.end_ways)])),
-            .string_table_data = data[@intCast(metadata.end_ways)..],
+            .business_data = @alignCast(std.mem.bytesAsSlice(f32, data[@intCast(metadata.end_ways)..@intCast(metadata.end_businesses)])),
+            .string_table_data = data[@intCast(metadata.end_businesses)..],
         };
     }
 };

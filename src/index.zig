@@ -29,10 +29,32 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     logWasm(slice.ptr, slice.len);
 }
 
+const ConsoleWriter = struct {
+    pub const Error = error{};
+    pub const Writer = std.io.Writer(void, Error, write);
+
+    const Self = @This();
+
+    pub fn write(_: void, bytes: []const u8) Error!usize {
+        logWasm(bytes.ptr, bytes.len);
+        return bytes.len;
+    }
+
+    pub fn writer() Writer {
+        return .{ .context = {} };
+    }
+};
+
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
     _ = ret_addr;
-    _ = error_return_trace;
+    const writer = ConsoleWriter.writer();
+    //_ = error_return_trace;
     logWasm(msg.ptr, msg.len);
+    if (error_return_trace) |t| {
+        writer.writeAll("stack trace time baybee") catch {};
+
+        t.format("", .{}, ConsoleWriter.writer()) catch {};
+    }
     asm volatile ("unreachable");
     unreachable;
 }
@@ -193,4 +215,22 @@ pub export fn setMonitoredCostMultiplier(id: usize, multiplier: f32) void {
     global.app.monitored_attributes.cost.update(id, multiplier) catch |e| {
         std.log.err("Failed to set cost multiplier: {s}", .{@errorName(e)});
     };
+}
+
+pub export var search_string: [16384]u8 = undefined;
+pub export fn updateSearch(len: usize) void {
+    global.app.searchBusiness(search_string[0..len]) catch |e| {
+        std.log.err("Failed to search : {s}", .{@errorName(e)});
+    };
+    global.app.render();
+}
+
+pub export fn setSelectedBusiness(id: usize) void {
+    global.app.selected_business = id;
+    global.app.render();
+}
+
+pub export fn clearSelectedBusiness() void {
+    global.app.selected_business = null;
+    global.app.render();
 }

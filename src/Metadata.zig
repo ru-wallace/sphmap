@@ -11,6 +11,9 @@ transit_way_start_idx: u32 = 0,
 osm_to_transit_way_start_idx: u32 = 0,
 end_nodes: u64 = 0,
 end_ways: u64 = 0,
+end_businesses: u64 = 0,
 way_tags: []Tags = &.{},
 // Indexed by trip id -> trip segment
 transit_trip_times: [][]u32 = &.{},
+// Index into string table for business id
+business_names: []u32 = &.{},

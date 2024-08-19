@@ -213,6 +213,8 @@ pub fn main() !void {
 
     app.setAspect(0.5);
 
+    // FIXME: Test searching
+
     app.debug_way_finding = true;
     app.debug_point_neighbors = true;
     app.render();

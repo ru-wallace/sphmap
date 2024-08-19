@@ -53,6 +53,11 @@ turning_cost: f32 = 0.0,
 path_start_time: u32 = 0,
 movement_speed: f32 = 1.34112,
 textures: []i32,
+business_points: []const f32,
+// FIXME: Where should this live?
+highlighted_businesses: []const f32 = &.{},
+// FIXME: Strong type?
+selected_business: ?usize = null,
 monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
 point_pair_to_parent: map_data.PointPairToWayMap,
 debug_way_finding: bool = false,
@@ -64,6 +69,7 @@ enable_transit_integration: bool = false,
 pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *const Metadata, image_tile_metadata: ImageTileData) !*App {
     const split_data = map_data.MapDataComponents.init(map_data_buf, metadata.*);
     const meter_metdata = map_data.latLongToMeters(split_data.point_data, metadata.*);
+    _ = map_data.latLongToMeters(split_data.business_data, metadata.*);
 
     const textures = try alloc.alloc(i32, image_tile_metadata.len);
     errdefer alloc.free(textures);
@@ -128,6 +134,7 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .adjacency_map = adjacency_map,
         .image_tile_metadata = image_tile_metadata,
         .renderer = renderer,
+        .business_points = split_data.business_data,
         .texture_renderer = texture_renderer,
         .heuristic_renderer = heuristic_renderer,
         .metadata = metadata,
@@ -330,6 +337,23 @@ pub fn render(self: *App) void {
     gui.glBindVertexArray(bound_renderer.inner.vao);
     gui.glDrawArrays(Gl.POINTS, @intCast(self.metadata.transit_node_start_idx), @intCast(len));
 
+    bound_renderer.inner.point_size.set(10.0);
+    bound_renderer.inner.r.set(1.0);
+    bound_renderer.inner.g.set(1.0);
+    bound_renderer.inner.b.set(0.0);
+
+    if (self.highlighted_businesses.len > 0) {
+        bound_renderer.renderCoords(self.highlighted_businesses, Gl.POINTS);
+    }
+
+    if (self.selected_business) |b| {
+        bound_renderer.inner.r.set(0.0);
+        bound_renderer.inner.g.set(1.0);
+        bound_renderer.inner.b.set(0.0);
+        // FIXME: Abstract business point lookup
+        bound_renderer.renderCoords(self.business_points[b * 2 .. (b + 1) * 2], Gl.POINTS);
+    }
+
     bound_renderer.inner.r.set(1.0);
     bound_renderer.inner.g.set(0.0);
     bound_renderer.inner.b.set(0.0);
@@ -466,6 +490,32 @@ pub fn removeMonitoredAttribute(self: *App, id: usize) !void {
 
 pub fn setMonitoredCostMultiplier(self: *App, id: usize, multiplier: f32) !void {
     self.monitored_attributes.cost.update(id, multiplier);
+}
+
+pub fn searchBusiness(self: *App, s: []const u8) !void {
+    gui.resetSearchResults();
+
+    if (s.len == 0) {
+        return;
+    }
+
+    var highlighted_points = std.ArrayList(f32).init(self.alloc);
+    defer highlighted_points.deinit();
+
+    for (self.metadata.business_names, 0..) |st_idx, business_id| {
+        const name = self.string_table.get(st_idx);
+        if (std.mem.indexOf(u8, name, s)) |_| {
+            gui.pushSearchResult(business_id, name.ptr, name.len);
+
+            // FIXME: Abstract business point lookup
+            try highlighted_points.appendSlice(
+                self.business_points[business_id * 2 .. (business_id + 1) * 2],
+            );
+        }
+    }
+
+    self.alloc.free(self.highlighted_businesses);
+    self.highlighted_businesses = try highlighted_points.toOwnedSlice();
 }
 
 const ClosestWayCalculator = struct {

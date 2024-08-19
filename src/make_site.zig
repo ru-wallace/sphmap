@@ -321,6 +321,7 @@ const Args = struct {
     output: []const u8,
     image_tile_data: []const u8,
     gtfs_data: []const u8,
+    business_data: ?[]const u8,
     it: std.process.ArgIterator,
 
     const Option = enum {
@@ -329,6 +330,7 @@ const Args = struct {
         @"--index-wasm",
         @"--image-tile-data",
         @"--gtfs-data",
+        @"--business-data",
         @"--output",
     };
     fn deinit(self: *Args) void {
@@ -344,6 +346,7 @@ const Args = struct {
         var index_wasm_opt: ?[]const u8 = null;
         var image_tile_data: []const u8 = &.{};
         var gtfs_data: ?[]const u8 = null;
+        var business_data: ?[]const u8 = null;
         var output_opt: ?[]const u8 = null;
 
         while (it.next()) |arg| {
@@ -358,6 +361,7 @@ const Args = struct {
                 .@"--index-wasm" => index_wasm_opt = it.next(),
                 .@"--image-tile-data" => image_tile_data = it.next() orelse @panic("no --image-tile arg"),
                 .@"--gtfs-data" => gtfs_data = it.next() orelse @panic("no --gtfs-data arg"),
+                .@"--business-data" => business_data = it.next() orelse @panic("no --business-data arg"),
                 .@"--output" => output_opt = it.next(),
             }
         }
@@ -368,6 +372,7 @@ const Args = struct {
             .index_wasm = index_wasm_opt orelse return error.NoWasm,
             .image_tile_data = image_tile_data,
             .gtfs_data = gtfs_data orelse return error.NoGtfs,
+            .business_data = business_data,
             .output = output_opt orelse return error.NoOutput,
             .it = it,
         };
@@ -396,6 +401,55 @@ fn linkWww(alloc: Allocator, in: []const u8, out_dir: []const u8) !void {
 
         try linkFile(alloc, p, out_dir);
     }
+}
+
+const BusinessInfo = struct {
+    points: []f32 = &.{},
+    // String table index
+    names: []u32 = &.{},
+
+    fn deinit(self: *BusinessInfo, alloc: Allocator) void {
+        alloc.free(self.points);
+        alloc.free(self.names);
+    }
+};
+
+fn processBusinesses(alloc: Allocator, business_data_path: []const u8, st: *StringTable) !BusinessInfo {
+    const Business = struct {
+        name: []const u8,
+        lon: f32,
+        lat: f32,
+    };
+
+    const business_f = try std.fs.cwd().openFile(business_data_path, .{});
+    var json_reader = std.json.reader(alloc, business_f.reader());
+    defer json_reader.deinit();
+
+    var diagnostics: std.json.Diagnostics = .{};
+    json_reader.enableDiagnostics(&diagnostics);
+
+    const business_data = std.json.parseFromTokenSource([]Business, alloc, &json_reader, .{}) catch |e| {
+        std.log.err("{s} @ {d}:{d}", .{ @errorName(e), diagnostics.getLine(), diagnostics.getColumn() });
+        return e;
+    };
+    defer business_data.deinit();
+
+    const points = try alloc.alloc(f32, business_data.value.len * 2);
+    errdefer alloc.free(points);
+
+    const names = try alloc.alloc(u32, business_data.value.len);
+    errdefer alloc.free(names);
+
+    for (business_data.value, 0..) |item, i| {
+        names[i] = @intCast(try st.push(item.name));
+        points[i * 2] = item.lon;
+        points[i * 2 + 1] = item.lat;
+    }
+
+    return .{
+        .points = points,
+        .names = names,
+    };
 }
 
 pub fn main() !void {
@@ -462,6 +516,8 @@ pub fn main() !void {
         .startElement = startElement,
         .endElement = endElement,
     });
+
+    const processed_businesses: BusinessInfo = if (args.business_data) |p| try processBusinesses(alloc, p, &userdata.string_table) else .{};
 
     var data_writer = MapDataWriter{
         .osm_nodes = NodeIdIdxMap.init(alloc),
@@ -568,6 +624,10 @@ pub fn main() !void {
 
     const end_ways = counting_writer.bytes_written;
 
+    try data_writer.writer.writeAll(std.mem.sliceAsBytes(processed_businesses.points));
+
+    const end_businesses = counting_writer.bytes_written;
+
     for (userdata.string_table.inner.keys()) |key| {
         try data_writer.pushStringTableString(key);
     }
@@ -580,10 +640,12 @@ pub fn main() !void {
         .max_lon = data_writer.max_lon,
         .end_nodes = end_nodes,
         .end_ways = end_ways,
+        .end_businesses = end_businesses,
         .transit_node_start_idx = transit_node_start,
         .transit_way_start_idx = transit_way_start,
         .osm_to_transit_way_start_idx = osm_to_transit_way_start,
         .way_tags = try userdata.way_tags.toOwnedSlice(),
+        .business_names = processed_businesses.names,
         .transit_trip_times = trip_stop_times.items,
     };
     try std.json.stringify(metadata, .{}, metadata_out_f.writer());

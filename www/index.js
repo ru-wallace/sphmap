@@ -35,10 +35,11 @@ class ObjectRegistry {
 }
 
 class WasmHandler {
-  constructor(gl, tags_div, monitored_div) {
+  constructor(gl, tags_div, monitored_div, search_results_div) {
     this.gl = gl;
     this.tags_div = tags_div;
     this.monitored_div = monitored_div;
+    this.search_results_div = search_results_div;
     this.gl_objects = new ObjectRegistry();
     this.memory = null;
   }
@@ -309,6 +310,31 @@ class WasmHandler {
     div.innerHTML = "Closest node: " + id;
   }
 
+  resetSearchResults() {
+    this.search_results_div.innerHTML = "";
+  }
+
+  pushSearchResult(id, name_ptr, name_len) {
+    const name_buf = new Uint8Array(this.memory.buffer, name_ptr, name_len);
+    const name = new TextDecoder("utf8").decode(name_buf);
+
+    const div = document.createElement("div");
+    // FIXME: Escape HTML?
+    div.innerText = name;
+
+    div.onmouseenter = () => {
+      div.classList.add("selected_search");
+      this.mod.instance.exports.setSelectedBusiness(id);
+    };
+
+    div.onmouseleave = () => {
+      div.classList.remove("selected_search");
+      this.mod.instance.exports.clearSelectedBusiness(id);
+    };
+
+    this.search_results_div.appendChild(div);
+  }
+
   fetchTexture(id, p, len) {
     const url_buf = new Uint8Array(this.memory.buffer, p, len);
     const url = new TextDecoder("utf8").decode(url_buf);
@@ -382,6 +408,8 @@ async function instantiateWasmModule(wasm_handlers) {
       glTexImage2D: wasm_handlers.glTexImage2D.bind(wasm_handlers),
       clearTags: wasm_handlers.clearTags.bind(wasm_handlers),
       pushTag: wasm_handlers.pushTag.bind(wasm_handlers),
+      resetSearchResults: wasm_handlers.resetSearchResults.bind(wasm_handlers),
+      pushSearchResult: wasm_handlers.pushSearchResult.bind(wasm_handlers),
       clearMonitoredAttributes:
         wasm_handlers.clearMonitoredAttributes.bind(wasm_handlers),
       pushMonitoredAttribute:
@@ -535,8 +563,14 @@ async function init() {
   const canvas = initCanvas();
   const tags_div = document.getElementById("tags");
   const monitored_div = document.getElementById("monitored");
+  const search_results_div = document.getElementById("search_results");
   const gl = makeGl(canvas);
-  const wasm_handlers = new WasmHandler(gl, tags_div, monitored_div);
+  const wasm_handlers = new WasmHandler(
+    gl,
+    tags_div,
+    monitored_div,
+    search_results_div,
+  );
   const mod = await instantiateWasmModule(wasm_handlers);
   await loadPointsData(mod);
   await loadMetadata(mod);
@@ -604,6 +638,18 @@ async function init() {
     document.getElementById("movement_speed"),
     mod.instance.exports.setMovementSpeed,
   );
+
+  hookupInput(document.getElementById("search"), (value) => {
+    const enc = new TextEncoder("utf8");
+    const val_encoded = enc.encode(value);
+    const wasm_s = new Uint8Array(
+      mod.instance.exports.memory.buffer,
+      mod.instance.exports.search_string.value,
+      16384,
+    );
+    wasm_s.set(val_encoded);
+    mod.instance.exports.updateSearch(val_encoded.length);
+  });
 }
 
 window.onload = init;
