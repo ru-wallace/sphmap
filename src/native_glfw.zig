@@ -32,16 +32,29 @@ fn errorCallback(err: c_int, desc: [*c]const u8) callconv(.C) void {
     std.debug.print("err: {d} {s}", .{ err, desc });
 }
 
+fn checkCompileStatus(shader: c.GLuint, name: []const u8) void {
+    var success: c.GLint = 0;
+    c.glGetShaderiv(shader, c.GL_COMPILE_STATUS, &success);
+    if (success == 0) {
+        var info_log: [512]u8 = undefined;
+        var output_len: c.GLsizei = 0;
+        c.glGetShaderInfoLog(shader, info_log.len, &output_len, &info_log);
+        std.debug.print("{s} compilation failed: {s}", .{ name, info_log[0..@intCast(output_len)] });
+    }
+}
+
 pub export fn compileLinkProgram(vs: [*]const u8, vs_len: usize, fs: [*]const u8, fs_len: usize) i32 {
     const vertex_shader = c.glCreateShader(c.GL_VERTEX_SHADER);
     const vs_len_i: i32 = @intCast(vs_len);
     c.glShaderSource(vertex_shader, 1, &vs, &vs_len_i);
     c.glCompileShader(vertex_shader);
+    checkCompileStatus(vertex_shader, "vertex shader");
 
     const fragment_shader = c.glCreateShader(c.GL_FRAGMENT_SHADER);
     const fs_len_i: i32 = @intCast(fs_len);
     c.glShaderSource(fragment_shader, 1, &fs, &fs_len_i);
     c.glCompileShader(fragment_shader);
+    checkCompileStatus(fragment_shader, "fragment shader");
 
     const program = c.glCreateProgram();
     c.glAttachShader(program, vertex_shader);
