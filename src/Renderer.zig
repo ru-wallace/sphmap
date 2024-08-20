@@ -13,6 +13,8 @@ index_buffer: []const u32,
 program: i32,
 vao: i32,
 custom_vao: i32,
+vbo: i32,
+custom_vbo: i32,
 ebo: i32,
 custom_ebo: i32,
 lat_center: FloatUniform,
@@ -33,7 +35,7 @@ pub fn init(point_data: []const f32, index_data: []const u32, transit_street_spl
     // Now create an array of positions for the square.
     const program = gui.compileLinkProgram(vs_source, vs_source.len, fs_source, fs_source.len);
 
-    const vao = uploadMapPoints(point_data);
+    const objs = uploadMapPoints(point_data);
     const custom_vao = uploadMapPoints(&.{});
 
     const lat_center = FloatUniform.init(program, "lat_center");
@@ -55,8 +57,10 @@ pub fn init(point_data: []const f32, index_data: []const u32, transit_street_spl
     return .{
         .index_buffer = index_data,
         .program = program,
-        .vao = vao,
-        .custom_vao = custom_vao,
+        .vao = objs[0],
+        .vbo = objs[1],
+        .custom_vao = custom_vao[0],
+        .custom_vbo = custom_vao[1],
         .ebo = ebo,
         .custom_ebo = custom_ebo,
         .lat_center = lat_center,
@@ -76,6 +80,7 @@ pub fn init(point_data: []const f32, index_data: []const u32, transit_street_spl
 pub fn bind(self: *Renderer) BoundRenderer {
     gui.glBindVertexArray(self.vao);
     gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, self.ebo);
+    gui.glBindBuffer(Gl.ARRAY_BUFFER, self.vbo);
     gui.glUseProgram(self.program);
     return .{
         .inner = self,
@@ -91,7 +96,7 @@ pub const ViewState = struct {
 const vs_source = @embedFile("vertex.glsl");
 const fs_source = @embedFile("fragment.glsl");
 
-fn uploadMapPoints(data: []const f32) i32 {
+fn uploadMapPoints(data: []const f32) struct { i32, i32 } {
     const vao = gui.glCreateVertexArray();
     gui.glBindVertexArray(vao);
 
@@ -102,7 +107,7 @@ fn uploadMapPoints(data: []const f32) i32 {
     }
     gui.glVertexAttribPointer(0, 2, Gl.FLOAT, false, 0, 0);
     gui.glEnableVertexAttribArray(0);
-    return vao;
+    return .{ vao, vbo };
 }
 
 fn setupMapIndices(indices: []const u32) i32 {
@@ -178,7 +183,11 @@ const BoundRenderer = struct {
     pub fn renderCoords(self: *const BoundRenderer, coords: []const f32, mode: i32) void {
         gui.glBindVertexArray(self.inner.custom_vao);
         gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, self.inner.ebo);
+        gui.glBindBuffer(Gl.ARRAY_BUFFER, self.inner.custom_vbo);
+
         gui.glBufferData(Gl.ARRAY_BUFFER, @ptrCast(coords.ptr), @intCast(coords.len * 4), Gl.STATIC_DRAW);
         gui.glDrawArrays(mode, 0, @intCast(coords.len / 2));
+
+        gui.glBindBuffer(Gl.ARRAY_BUFFER, self.inner.vbo);
     }
 };
