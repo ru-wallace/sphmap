@@ -508,27 +508,31 @@ const Ui = struct {
         );
     }
 
-    const RequestedActions = struct {
-        start_path_planning: bool = false,
-        step_path_planning: ?c_int = null,
-        end_path_planning: bool = false,
-        debug_path_planning: ?bool = null,
-        debug_point_neighbors: ?bool = null,
-        debug_way_finding: ?bool = null,
-        debug_parenting: ?bool = null,
-        enable_transit_integration: ?bool = null,
-        add_monitored_attribute: ?struct { k: [*]const u8, v: [*]const u8 } = null,
-        remove_monitored_attribute: ?usize = null,
-        update_cost_multiplier: ?struct { id: usize, value: f32 } = null,
-        path_start_time: ?c_int = null,
-        movement_speed: ?f32 = null,
-        consumed_mouse_input: bool = false,
-        turning_cost: ?f32 = null,
-        update_color: ?struct { id: usize, color: [3]f32 } = null,
+    const RequestedAction = union(enum) {
+        start_path_planning: void,
+        step_path_planning: u32,
+        end_path_planning: void,
+        debug_path_planning: bool,
+        debug_point_neighbors: bool,
+        debug_way_finding: bool,
+        debug_parenting: bool,
+        enable_transit_integration: bool,
+        add_monitored_attribute: struct { k: [*]const u8, v: [*]const u8 },
+        remove_monitored_attribute: usize,
+        update_cost_multiplier: struct { id: usize, value: f32 },
+        path_start_time: u32,
+        movement_speed: f32,
+        turning_cost: f32,
+        update_color: struct { id: usize, color: [3]f32 },
     };
 
-    fn drawOverlay(self: *Ui) RequestedActions {
-        var ret = RequestedActions{};
+    const DrawResponse = struct {
+        action: ?RequestedAction = null,
+        consumed_mouse_input: bool = false,
+    };
+
+    fn drawOverlay(self: *Ui) DrawResponse {
+        var ret = DrawResponse{};
 
         _ = c.igBegin("Overlay", null, c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar);
 
@@ -543,10 +547,10 @@ const Ui = struct {
                 c.igText("%.*s: %.*s", tag.key.len, tag.key.ptr, tag.val.len, tag.val.ptr);
                 _ = c.igTableNextColumn();
                 if (c.igButton("add", .{ .x = add_button_width, .y = 0 })) {
-                    ret.add_monitored_attribute = .{
+                    ret.action = .{ .add_monitored_attribute = .{
                         .k = tag.key.ptr,
                         .v = tag.val.ptr,
-                    };
+                    } };
                 }
                 c.igPopID();
             }
@@ -556,23 +560,23 @@ const Ui = struct {
         c.igText("Closest node: %lu", globals.node_id);
 
         if (c.igCheckbox("Debug way finding", &self.debug_way_finding)) {
-            ret.debug_way_finding = self.debug_way_finding;
+            ret.action = .{ .debug_way_finding = self.debug_way_finding };
         }
 
         if (c.igCheckbox("Debug point neighbors", &self.debug_point_neighbors)) {
-            ret.debug_point_neighbors = self.debug_point_neighbors;
+            ret.action = .{ .debug_point_neighbors = self.debug_point_neighbors };
         }
 
         if (c.igCheckbox("Debug path planning", &self.debug_path_planning)) {
-            ret.debug_path_planning = self.debug_path_planning;
+            ret.action = .{ .debug_path_planning = self.debug_path_planning };
         }
 
         if (c.igCheckbox("Debug parenting", &self.debug_parenting)) {
-            ret.debug_parenting = self.debug_parenting;
+            ret.action = .{ .debug_parenting = self.debug_parenting };
         }
 
         if (c.igCheckbox("Enable transit integration", &self.enable_transit_integration)) {
-            ret.enable_transit_integration = self.enable_transit_integration;
+            ret.action = .{ .enable_transit_integration = self.enable_transit_integration };
         }
 
         if (c.igBeginTable("tags", 4, 0, .{ .x = overlay_width, .y = 0 }, 0)) {
@@ -589,10 +593,10 @@ const Ui = struct {
 
                 _ = c.igTableNextColumn();
                 if (c.igInputFloat("cost", &tag.cost_multiplier, 0.0, 0.0, "%.3f", 0)) {
-                    ret.update_cost_multiplier = .{
+                    ret.action = .{ .update_cost_multiplier = .{
                         .id = tag.id,
                         .value = tag.cost_multiplier,
-                    };
+                    } };
                 }
 
                 _ = c.igTableNextColumn();
@@ -602,7 +606,7 @@ const Ui = struct {
 
                 _ = c.igTableNextColumn();
                 if (c.igButton("remove", .{ .x = 50, .y = 0 })) {
-                    ret.remove_monitored_attribute = tag.id;
+                    ret.action = .{ .remove_monitored_attribute = tag.id };
                 }
 
                 c.igPopID();
@@ -611,24 +615,28 @@ const Ui = struct {
         }
 
         if (c.igInputFloat("Turning Cost", &self.turning_cost, 0.0, 0.0, "%.3f", 0)) {
-            ret.turning_cost = self.turning_cost;
+            ret.action = .{ .turning_cost = self.turning_cost };
         }
 
-        ret.start_path_planning = c.igButton("Set path start", .{ .x = 0, .y = 0 });
-        ret.end_path_planning = c.igButton("Set path end", .{ .x = 0, .y = 0 });
+        if (c.igButton("Set path start", .{ .x = 0, .y = 0 })) {
+            ret.action = .{ .start_path_planning = {} };
+        }
+        if (c.igButton("Set path end", .{ .x = 0, .y = 0 })) {
+            ret.action = .{ .end_path_planning = {} };
+        }
 
         if (c.igInputInt("Path start time (s since midnight)", &self.path_start_time, 0, 0, 0)) {
-            ret.path_start_time = self.path_start_time;
+            ret.action = .{ .path_start_time = @intCast(self.path_start_time) };
         }
 
         if (c.igInputFloat("Movement speed", &self.movement_speed, 0, 0, "%.3f", 0)) {
-            ret.movement_speed = self.movement_speed;
+            ret.action = .{ .movement_speed = self.movement_speed };
         }
 
         _ = c.igInputInt("step amount", &self.step_amount, 0, 0, 0);
         self.step_amount = @max(0, self.step_amount);
         if (c.igButton("Step path planning", .{ .x = 0, .y = 0 })) {
-            ret.step_path_planning = self.step_amount;
+            ret.action = .{ .step_path_planning = @intCast(self.step_amount) };
         }
 
         c.igEnd();
@@ -637,10 +645,10 @@ const Ui = struct {
             var window_open = true;
             _ = c.igBegin("Select color", &window_open, 0);
             if (c.igColorPicker3("Select color", &globals.monitored_tags.items[id].color, 0)) {
-                ret.update_color = .{
+                ret.action = .{ .update_color = .{
                     .id = id,
                     .color = globals.monitored_tags.items[id].color,
-                };
+                } };
             }
             c.igEnd();
 
@@ -654,7 +662,7 @@ const Ui = struct {
         return ret;
     }
 
-    fn render(self: *Ui, width: c_int, height: c_int) RequestedActions {
+    fn render(self: *Ui, width: c_int, height: c_int) DrawResponse {
         startFrame();
         self.setOverlayDims(width, height);
 
@@ -665,70 +673,28 @@ const Ui = struct {
     }
 };
 
-fn handleUiActions(app: *App, actions: Ui.RequestedActions) !void {
-    if (actions.start_path_planning) {
-        try app.startPath();
-    }
-
-    if (actions.step_path_planning) |amount| {
-        try app.stepPath(@intCast(amount));
-    }
-
-    if (actions.end_path_planning) {
-        try app.endPath();
-    }
-
-    if (actions.debug_path_planning) |value| {
-        app.debug_path_finding = value;
-    }
-
-    if (actions.debug_point_neighbors) |value| {
-        app.debug_point_neighbors = value;
-    }
-
-    if (actions.debug_way_finding) |value| {
-        app.debug_way_finding = value;
-    }
-
-    if (actions.debug_parenting) |value| {
-        app.debug_parenting = value;
-    }
-
-    if (actions.enable_transit_integration) |value| {
-        app.enable_transit_integration = value;
-    }
-
-    if (actions.add_monitored_attribute) |value| {
-        try app.monitorWayAttribute(value.k, value.v);
-    }
-
-    if (actions.remove_monitored_attribute) |value| {
-        try app.removeMonitoredAttribute(value);
-    }
-
-    if (actions.update_cost_multiplier) |value| {
-        try app.monitored_attributes.cost.update(value.id, value.value);
-    }
-
-    if (actions.path_start_time) |t| {
-        app.path_start_time = @intCast(t);
-    }
-
-    if (actions.movement_speed) |s| {
-        app.movement_speed = s;
-    }
-
-    if (actions.update_color) |value| {
-        app.monitored_attributes.rendering.update(
+fn handleUiActions(app: *App, action: Ui.RequestedAction) !void {
+    switch (action) {
+        .start_path_planning => try app.startPath(),
+        .step_path_planning => |amount| try app.stepPath(@intCast(amount)),
+        .end_path_planning => try app.endPath(),
+        .debug_path_planning => |value| app.debug_path_finding = value,
+        .debug_point_neighbors => |value| app.debug_point_neighbors = value,
+        .debug_way_finding => |value| app.debug_way_finding = value,
+        .debug_parenting => |value| app.debug_parenting = value,
+        .enable_transit_integration => |value| app.enable_transit_integration = value,
+        .add_monitored_attribute => |value| try app.monitorWayAttribute(value.k, value.v),
+        .remove_monitored_attribute => |value| try app.removeMonitoredAttribute(value),
+        .update_cost_multiplier => |value| try app.monitored_attributes.cost.update(value.id, value.value),
+        .path_start_time => |t| app.path_start_time = t,
+        .movement_speed => |t| app.movement_speed = t,
+        .update_color => |value| app.monitored_attributes.rendering.update(
             value.id,
             value.color[0],
             value.color[1],
             value.color[2],
-        );
-    }
-
-    if (actions.turning_cost) |cost| {
-        app.turning_cost = cost;
+        ),
+        .turning_cost => |cost| app.turning_cost = cost,
     }
 }
 
@@ -855,10 +821,13 @@ pub fn main() !void {
         const mouse_pos = glfw.getCursorPos();
         // NOTE: This also renders
         try app.onMouseMove(mouse_pos.x, mouse_pos.y);
+        app.render();
 
         const ui_actions = ui.render(width, height);
 
-        try handleUiActions(app, ui_actions);
+        if (ui_actions.action) |action| {
+            try handleUiActions(app, action);
+        }
 
         if (!ui_actions.consumed_mouse_input) {
             try handleGlfwActions(alloc, &glfw, app);

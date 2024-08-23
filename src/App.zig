@@ -265,23 +265,18 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
     }
-
-    self.render();
 }
 
 pub fn setAspect(self: *App, aspect: f32) void {
     self.view_state.aspect = aspect;
-    self.render();
 }
 
 pub fn zoomIn(self: *App) void {
     self.view_state.zoom *= 2.0;
-    self.render();
 }
 
 pub fn zoomOut(self: *App) void {
     self.view_state.zoom *= 0.5;
-    self.render();
 }
 
 pub fn render(self: *App) void {
@@ -421,7 +416,6 @@ pub fn startPath(self: *App) !void {
     if (self.path_end) |end| {
         try self.resetPathPlanner(self.closest_node, end);
     }
-    self.render();
 }
 
 pub fn stepPath(self: *App, amount: u32) !void {
@@ -433,7 +427,6 @@ pub fn stepPath(self: *App, amount: u32) !void {
             }
         }
     }
-    self.render();
 }
 
 pub fn endPath(self: *App) !void {
@@ -441,7 +434,6 @@ pub fn endPath(self: *App) !void {
     if (self.path_start) |s| {
         try self.resetPathPlanner(s, self.closest_node);
     }
-    self.render();
 }
 
 fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
@@ -478,7 +470,6 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
 
 pub fn registerTexture(self: *App, id: usize, tex: i32) !void {
     self.render_state.textures[id] = tex;
-    self.render();
 }
 
 pub fn monitorWayAttribute(self: *App, k: [*]const u8, v: [*]const u8) !void {

@@ -70,6 +70,7 @@ pub export fn mouseMove(x_norm: f32, y_norm: f32) void {
     global.app.onMouseMove(x_norm, y_norm) catch |e| {
         print("e: {any}", .{e});
     };
+    global.app.render();
 }
 
 pub export fn mouseUp() void {
@@ -83,10 +84,12 @@ pub export fn zoom(delta_y: f32) void {
     } else if (delta_y < 0) {
         global.app.zoomIn();
     }
+    global.app.render();
 }
 
 pub export fn setAspect(aspect: f32) void {
     global.app.setAspect(aspect);
+    global.app.render();
 }
 
 pub export fn init(aspect: f32) void {
@@ -145,18 +148,21 @@ pub export fn startPath() void {
     global.app.startPath() catch |e| {
         std.log.err("Failed to start path: {s}", .{@errorName(e)});
     };
+    global.app.render();
 }
 
 pub export fn endPath() void {
     global.app.endPath() catch |e| {
         std.log.err("Failed to end path: {s}", .{@errorName(e)});
     };
+    global.app.render();
 }
 
 pub export fn stepPath(steps: u32) void {
     global.app.stepPath(steps) catch |e| {
         std.log.err("Failed to step path: {s}", .{@errorName(e)});
     };
+    global.app.render();
 }
 
 pub export fn setTurningCost(cost: f32) void {
@@ -167,18 +173,21 @@ pub export fn registerTexture(id: usize, tex: i32) void {
     global.app.registerTexture(id, tex) catch |e| {
         std.log.err("Failed to register texture: {any}", .{e});
     };
+    global.app.render();
 }
 
 pub export fn monitorWayAttribute(k: [*]u8, v: [*]u8) void {
     global.app.monitorWayAttribute(k, v) catch |e| {
         std.log.err("Failed to monitor way: {any}", .{e});
     };
+    global.app.render();
 }
 
 pub export fn removeMonitoredAttribute(id: usize) void {
     global.app.removeMonitoredAttribute(id) catch |e| {
         std.log.err("Failed to remove monitored attribute: {s}", .{@errorName(e)});
     };
+    global.app.render();
 }
 
 fn colorf32(c: u8) f32 {
@@ -187,10 +196,12 @@ fn colorf32(c: u8) f32 {
 
 pub export fn setMonitoredColor(id: usize, r: u8, g: u8, b: u8) void {
     global.app.monitored_attributes.rendering.update(id, colorf32(r), colorf32(g), colorf32(b));
+    global.app.render();
 }
 
 pub export fn setMonitoredCostMultiplier(id: usize, multiplier: f32) void {
     global.app.monitored_attributes.cost.update(id, multiplier) catch |e| {
         std.log.err("Failed to set cost multiplier: {s}", .{@errorName(e)});
     };
+    global.app.render();
 }
