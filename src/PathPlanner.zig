@@ -76,6 +76,10 @@ fn LinearAstarLookup(comptime T: type) type {
         fn get(self: *Self, node: AStarNode) *T {
             return &self.storage[self.segment_starts[node.came_from.value] + node.me.value];
         }
+
+        fn getConst(self: *const Self, node: AStarNode) *const T {
+            return &self.storage[self.segment_starts[node.came_from.value] + node.me.value];
+        }
     };
 }
 
@@ -370,7 +374,7 @@ fn order(_: void, a: NodeWithFscore, b: NodeWithFscore) std.math.Order {
     return std.math.order(a.fscore, b.fscore);
 }
 
-fn reconstructPath(self: *PathPlanner, end: AStarNode) ![]const NodeId {
+pub fn reconstructPath(self: *const PathPlanner, end: AStarNode) ![]const NodeId {
     var ret = std.ArrayList(NodeId).init(self.alloc);
     defer ret.deinit();
 
@@ -379,7 +383,7 @@ fn reconstructPath(self: *PathPlanner, end: AStarNode) ![]const NodeId {
     var it = end;
     while (it.came_from.value != self.start.value) {
         try ret.append(it.came_from);
-        it = self.came_from.get(it).*;
+        it = self.came_from.getConst(it).*;
     }
 
     try ret.append(self.start);

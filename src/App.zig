@@ -30,14 +30,34 @@ const WayBuckets = map_data.WayBuckets;
 
 const App = @This();
 
+const WayFindingDebugElem = struct {
+    size: f32,
+    pos: Point,
+};
+
+const RenderState = struct {
+    renderer: Renderer,
+    heuristic_renderer: HeuristicRenderer,
+    texture_renderer: TextureRenderer,
+
+    image_tile_metadata: ImageTileData,
+    way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
+    closest_way_calc: ?ClosestWayCalculator = null,
+    closest_way: ?WayId = null,
+    closest_way_nodes: ?[2]NodeId = null,
+    closest_way_point: ?Point = null,
+    textures: []i32,
+
+    fn deinit(self: *RenderState, alloc: Allocator) void {
+        self.way_finding_debug.deinit(alloc);
+        alloc.free(self.textures);
+    }
+};
+
 alloc: Allocator,
 mouse_tracker: MouseTracker = .{},
 metadata: *const Metadata,
 meter_metadata: map_data.MeterMetadata,
-image_tile_metadata: ImageTileData,
-renderer: Renderer,
-heuristic_renderer: HeuristicRenderer,
-texture_renderer: TextureRenderer,
 view_state: ViewState,
 points: PointLookup,
 ways: WayLookup,
@@ -49,12 +69,12 @@ closest_node: NodeId = NodeId{ .value = 0 },
 transit_trip_times: map_data.TransitTripTimes,
 path_start: ?NodeId = null,
 path_end: ?NodeId = null,
+render_state: RenderState,
+monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
+point_pair_to_parent: map_data.PointPairToWayMap,
 turning_cost: f32 = 0.0,
 path_start_time: u32 = 0,
 movement_speed: f32 = 1.34112,
-textures: []i32,
-monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
-point_pair_to_parent: map_data.PointPairToWayMap,
 debug_way_finding: bool = false,
 debug_point_neighbors: bool = false,
 debug_path_finding: bool = false,
@@ -126,10 +146,6 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
     ret.* = .{
         .alloc = alloc,
         .adjacency_map = adjacency_map,
-        .image_tile_metadata = image_tile_metadata,
-        .renderer = renderer,
-        .texture_renderer = texture_renderer,
-        .heuristic_renderer = heuristic_renderer,
         .metadata = metadata,
         .meter_metadata = meter_metdata,
         .view_state = view_state,
@@ -139,7 +155,13 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
         .point_pair_to_parent = point_pair_to_parent,
         .transit_trip_times = transit_trip_times,
         .string_table = string_table,
-        .textures = textures,
+        .render_state = .{
+            .renderer = renderer,
+            .texture_renderer = texture_renderer,
+            .heuristic_renderer = heuristic_renderer,
+            .image_tile_metadata = image_tile_metadata,
+            .textures = textures,
+        },
         // Sibling reference
         .monitored_attributes = undefined,
     };
@@ -155,8 +177,8 @@ pub fn deinit(self: *App) void {
     self.way_buckets.deinit(self.alloc);
     self.string_table.deinit(self.alloc);
     self.monitored_attributes.deinit();
-    self.alloc.free(self.textures);
     self.point_pair_to_parent.deinit();
+    self.render_state.deinit(self.alloc);
     if (self.path_planner) |*pp| {
         pp.deinit();
     }
@@ -195,10 +217,6 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         self.view_state.center.x,
     );
 
-    self.render();
-
-    const bound_renderer = self.renderer.bind();
-
     var calc = ClosestWayCalculator.init(
         self.view_state.center,
         self.ways,
@@ -206,13 +224,13 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         self.points,
     );
 
+    self.render_state.way_finding_debug.clearRetainingCapacity();
     if (self.debug_way_finding) {
-        bound_renderer.inner.r.set(0.0);
-        bound_renderer.inner.g.set(1.0);
-        bound_renderer.inner.b.set(1.0);
         while (calc.step()) |debug| {
-            bound_renderer.inner.point_size.set(std.math.pow(f32, std.math.e, -debug.dist * 0.05) * 50.0);
-            bound_renderer.renderCoords(&.{ debug.dist_loc.x, debug.dist_loc.y }, Gl.POINTS);
+            const size = std.math.pow(f32, std.math.e, -debug.dist * 0.05) * 50.0;
+            if (size > 1) {
+                try self.render_state.way_finding_debug.append(self.alloc, .{ .size = size, .pos = debug.dist_loc });
+            }
         }
     } else {
         while (calc.step()) |_| {}
@@ -229,44 +247,26 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
     }
 
     if (calc.min_dist != std.math.inf(f32)) {
-        bound_renderer.inner.r.set(0.0);
-        bound_renderer.inner.g.set(1.0);
-        bound_renderer.inner.b.set(1.0);
         const way = self.ways.get(calc.min_way);
         if (calc.min_way_segment > way.node_ids.len) {
             std.log.err("invalid segment", .{});
             unreachable;
         }
-        const node_id = way.node_ids[calc.min_way_segment];
 
-        if (self.debug_parenting) {
-            const neighbor_id = way.node_ids[calc.neighbor_segment];
-            if (self.point_pair_to_parent.get(node_id, neighbor_id)) |parent| {
-                bound_renderer.inner.r.set(0);
-                bound_renderer.inner.g.set(0);
-                bound_renderer.inner.b.set(1);
-                bound_renderer.renderSelectedWay(self.ways.get(parent));
-            }
-        }
+        const node_id = way.node_ids[calc.min_way_segment];
+        const neighbor_id = way.node_ids[calc.neighbor_segment];
+        self.render_state.closest_way_nodes = .{
+            node_id,
+            neighbor_id,
+        };
+        self.render_state.closest_way_point = calc.min_dist_loc;
+        self.render_state.closest_way = calc.min_way;
 
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
-
-        const neighbors = self.adjacency_map.getOsmNeighbors(node_id);
-        if (self.debug_point_neighbors) {
-            bound_renderer.inner.point_size.set(10.0);
-            bound_renderer.renderPoints(neighbors, Gl.POINTS);
-        }
-        bound_renderer.inner.r.set(0);
-        bound_renderer.inner.g.set(1);
-        bound_renderer.inner.b.set(1);
-        bound_renderer.renderSelectedWay(self.ways.get(calc.min_way));
-        if (self.debug_way_finding) {
-            bound_renderer.renderCoords(&.{ self.view_state.center.x, self.view_state.center.y, calc.min_dist_loc.x, calc.min_dist_loc.y }, Gl.LINE_STRIP);
-        }
-        bound_renderer.inner.point_size.set(10.0);
-        bound_renderer.renderPoints(&.{node_id}, Gl.POINTS);
     }
+
+    self.render();
 }
 
 pub fn setAspect(self: *App, aspect: f32) void {
@@ -288,9 +288,9 @@ pub fn render(self: *App) void {
     gui.glClearColor(0.0, 0.0, 0.0, 1.0);
     gui.glClear(Gl.COLOR_BUFFER_BIT);
 
-    for (self.textures, 0..) |tex, i| {
-        var bound_texture_renderer = self.texture_renderer.bind();
-        const screen_space = tileLocScreenSpace(self.image_tile_metadata[i], self.view_state, self.metadata.*);
+    for (self.render_state.textures, 0..) |tex, i| {
+        var bound_texture_renderer = self.render_state.texture_renderer.bind();
+        const screen_space = tileLocScreenSpace(self.render_state.image_tile_metadata[i], self.view_state, self.metadata.*);
         bound_texture_renderer.render(
             tex,
             screen_space.center,
@@ -298,7 +298,7 @@ pub fn render(self: *App) void {
         );
     }
 
-    var bound_renderer = self.renderer.bind();
+    var bound_renderer = self.render_state.renderer.bind();
     bound_renderer.render(self.view_state);
 
     for (self.monitored_attributes.rendering.attributes.items) |monitored| {
@@ -311,16 +311,15 @@ pub fn render(self: *App) void {
     if (self.path_planner) |*pp| {
         if (self.debug_path_finding and pp.transit_state == .some) {
             // FIXME: Bad panic
-            self.heuristic_renderer.feed(self.alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
+            self.render_state.heuristic_renderer.feed(self.alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
 
-            var bound = self.heuristic_renderer.bind();
+            var bound = self.render_state.heuristic_renderer.bind();
             bound.render(self.view_state);
 
-            bound_renderer = self.renderer.bind();
+            bound_renderer = self.render_state.renderer.bind();
         }
     }
 
-    bound_renderer = self.renderer.bind();
     const transit_point_size = 10000.0;
     bound_renderer.inner.point_size.set(transit_point_size * self.view_state.zoom);
     const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
@@ -342,7 +341,7 @@ pub fn render(self: *App) void {
         bound_renderer.renderPoints(&.{end}, Gl.POINTS);
     }
 
-    if (self.path_planner) |*pp| {
+    if (self.path_planner) |pp| {
         if (self.debug_path_finding) {
             var seen_gscores = std.ArrayList(NodeId).init(self.alloc);
             defer seen_gscores.deinit();
@@ -365,16 +364,56 @@ pub fn render(self: *App) void {
             bound_renderer.renderPoints(seen_gscores.items, Gl.POINTS);
         }
 
-        if (pp.final_node) |_| {
-            const res = pp.step() catch return orelse return;
-            defer res.deinit(self.alloc);
+        if (pp.final_node) |final_node| {
+            const res = pp.reconstructPath(final_node.id) catch return;
+            defer self.alloc.free(res);
 
             bound_renderer.inner.r.set(1.0);
             bound_renderer.inner.g.set(0.0);
             bound_renderer.inner.b.set(0.0);
-            bound_renderer.renderPoints(res.path, Gl.LINE_STRIP);
+            bound_renderer.renderPoints(res, Gl.LINE_STRIP);
         }
     }
+
+    for (self.render_state.way_finding_debug.items) |item| {
+        bound_renderer.inner.r.set(0.0);
+        bound_renderer.inner.g.set(1.0);
+        bound_renderer.inner.b.set(1.0);
+        bound_renderer.inner.point_size.set(item.size);
+        bound_renderer.renderCoords(&.{ item.pos.x, item.pos.y }, Gl.POINTS);
+    }
+
+    if (self.debug_parenting) blk: {
+        const nodes = self.render_state.closest_way_nodes orelse break :blk;
+        if (self.point_pair_to_parent.get(nodes[0], nodes[1])) |parent| {
+            bound_renderer.inner.r.set(0);
+            bound_renderer.inner.g.set(0);
+            bound_renderer.inner.b.set(1);
+            bound_renderer.renderSelectedWay(self.ways.get(parent));
+        }
+    }
+
+    bound_renderer.inner.r.set(0.0);
+    bound_renderer.inner.g.set(1.0);
+    bound_renderer.inner.b.set(1.0);
+
+    if (self.debug_point_neighbors) {
+        const neighbors = self.adjacency_map.getOsmNeighbors(self.closest_node);
+        bound_renderer.inner.point_size.set(10.0);
+        bound_renderer.renderPoints(neighbors, Gl.POINTS);
+    }
+
+    if (self.render_state.closest_way) |way_id| {
+        bound_renderer.renderSelectedWay(self.ways.get(way_id));
+    }
+
+    if (self.debug_way_finding) blk: {
+        const closest_point = self.render_state.closest_way_point orelse break :blk;
+        bound_renderer.renderCoords(&.{ self.view_state.center.x, self.view_state.center.y, closest_point.x, closest_point.y }, Gl.LINE_STRIP);
+    }
+
+    bound_renderer.inner.point_size.set(10.0);
+    bound_renderer.renderPoints(&.{self.closest_node}, Gl.POINTS);
 }
 
 pub fn startPath(self: *App) !void {
@@ -438,7 +477,7 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
 }
 
 pub fn registerTexture(self: *App, id: usize, tex: i32) !void {
-    self.textures[id] = tex;
+    self.render_state.textures[id] = tex;
     self.render();
 }
 
