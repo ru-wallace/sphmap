@@ -43,15 +43,9 @@ const RenderState = struct {
     metadata: *const Metadata = undefined,
     monitored_attributes: *const monitored_attributes.MonitoredAttributeTracker = undefined,
     path_planner: *const ?PathPlanner = undefined,
-    path_start: ?NodeId = null,
-    path_end: ?NodeId = null,
     closest_node: NodeId = undefined,
 
-    debug_way_finding: bool = false,
     debug_path_finding: bool = false,
-
-    // Probably can turn into vbo or ebo
-    way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
 
     // Things for sure we want to keep
     //
@@ -65,13 +59,21 @@ const RenderState = struct {
         view_state: ViewState = undefined,
         pp_debug_point_buffer: i32 = 0,
         num_pp_debug_points: usize = 0,
+
         closest_way: ?WayId = null,
         closest_way_nodes: ?[2]NodeId = null,
-        closest_way_point: ?Point = null,
 
         neighbor_points: []const NodeId = &.{},
 
         parent_way: ?WayId = null,
+
+        // Probably can turn into vbo or ebo
+        way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
+        closest_way_point: ?Point = null,
+
+        path_start: ?NodeId = null,
+        path_end: ?NodeId = null,
+
     } = .{},
 
 
@@ -157,11 +159,11 @@ const RenderState = struct {
         bound_renderer.inner.g.set(0.0);
         bound_renderer.inner.b.set(0.0);
         bound_renderer.inner.point_size.set(10.0);
-        if (self.path_start) |s| {
+        if (self.snapshot.path_start) |s| {
             bound_renderer.renderPoints(&.{s}, Gl.POINTS);
         }
 
-        if (self.path_end) |end| {
+        if (self.snapshot.path_end) |end| {
             bound_renderer.renderPoints(&.{end}, Gl.POINTS);
         }
 
@@ -189,7 +191,7 @@ const RenderState = struct {
             }
         }
 
-        for (self.way_finding_debug.items) |item| {
+        for (self.snapshot.way_finding_debug.items) |item| {
             bound_renderer.inner.r.set(0.0);
             bound_renderer.inner.g.set(1.0);
             bound_renderer.inner.b.set(1.0);
@@ -215,8 +217,7 @@ const RenderState = struct {
             bound_renderer.renderSelectedWay(self.ways.get(way_id));
         }
 
-        if (self.debug_way_finding) blk: {
-            const closest_point = self.snapshot.closest_way_point orelse break :blk;
+        if (self.snapshot.closest_way_point) |closest_point| {
             bound_renderer.renderCoords(&.{ self.snapshot.view_state.center.x, self.snapshot.view_state.center.y, closest_point.x, closest_point.y }, Gl.LINE_STRIP);
         }
 
@@ -226,7 +227,7 @@ const RenderState = struct {
     }
 
     fn deinit(self: *RenderState, alloc: Allocator) void {
-        self.way_finding_debug.deinit(alloc);
+        self.snapshot.way_finding_debug.deinit(alloc);
         alloc.free(self.textures);
     }
 };
@@ -401,12 +402,12 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
         self.points,
     );
 
-    self.render_state.way_finding_debug.clearRetainingCapacity();
+    self.render_state.snapshot.way_finding_debug.clearRetainingCapacity();
     if (self.debug_way_finding) {
         while (calc.step()) |debug| {
             const size = std.math.pow(f32, std.math.e, -debug.dist * 0.05) * 50.0;
             if (size > 1) {
-                try self.render_state.way_finding_debug.append(self.alloc, .{ .size = size, .pos = debug.dist_loc });
+                try self.render_state.snapshot.way_finding_debug.append(self.alloc, .{ .size = size, .pos = debug.dist_loc });
             }
         }
     } else {
@@ -484,9 +485,8 @@ pub fn updateRenderState(self: *App) void {
     self.render_state.path_planner = &self.path_planner;
     self.render_state.points = &self.points;
     self.render_state.ways = &self.ways;
-    self.render_state.path_start = self.path_start;
-    self.render_state.path_end = self.path_end;
-    self.render_state.debug_way_finding = self.debug_way_finding;
+    self.render_state.snapshot.path_start = self.path_start;
+    self.render_state.snapshot.path_end = self.path_end;
     self.render_state.debug_path_finding = self.debug_path_finding;
     self.render_state.closest_node = self.closest_node;
 
