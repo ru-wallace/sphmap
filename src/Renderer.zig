@@ -78,6 +78,18 @@ pub fn init(point_data: []const f32, index_data: []const u32, transit_street_spl
     };
 }
 
+pub fn createPointBuffer(point_ids: []const NodeId) i32 {
+    const ebo = gui.glCreateBuffer();
+    gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, ebo);
+    gui.glBufferData(
+        Gl.ELEMENT_ARRAY_BUFFER,
+        @ptrCast(point_ids.ptr),
+        point_ids.len * 4,
+        Gl.STATIC_DRAW,
+    );
+    return ebo;
+}
+
 pub fn bind(self: *Renderer) BoundRenderer {
     gui.glBindVertexArray(self.vao);
     gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, self.ebo);
@@ -149,6 +161,7 @@ const BoundRenderer = struct {
         gui.glBindVertexArray(self.inner.vao);
         gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, ebo);
         gui.glDrawElements(mode, @intCast(len), Gl.UNSIGNED_INT, 0);
+        gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, self.inner.ebo);
     }
 
     pub fn renderPoints(self: *const BoundRenderer, point_ids: []const NodeId, mode: i32) void {

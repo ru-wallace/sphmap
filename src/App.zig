@@ -40,13 +40,190 @@ const RenderState = struct {
     heuristic_renderer: HeuristicRenderer,
     texture_renderer: TextureRenderer,
 
-    image_tile_metadata: ImageTileData,
+    metadata: *const Metadata = undefined,
+    monitored_attributes: *const monitored_attributes.MonitoredAttributeTracker = undefined,
+    path_planner: *const ?PathPlanner = undefined,
+    path_start: ?NodeId = null,
+    path_end: ?NodeId = null,
+    closest_node: NodeId = undefined,
+
+    debug_way_finding: bool = false,
+    debug_path_finding: bool = false,
+
+    // Probably can turn into vbo or ebo
     way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
-    closest_way_calc: ?ClosestWayCalculator = null,
-    closest_way: ?WayId = null,
-    closest_way_nodes: ?[2]NodeId = null,
-    closest_way_point: ?Point = null,
+
+    // Things for sure we want to keep
+    //
+    // only valid if num_pp_debug_points > 0
+    points: *const PointLookup = undefined,
+    ways: *const WayLookup = undefined,
+    image_tile_metadata: ImageTileData,
     textures: []i32,
+
+    snapshot: struct {
+        view_state: ViewState = undefined,
+        pp_debug_point_buffer: i32 = 0,
+        num_pp_debug_points: usize = 0,
+        closest_way: ?WayId = null,
+        closest_way_nodes: ?[2]NodeId = null,
+        closest_way_point: ?Point = null,
+
+        neighbor_points: []const NodeId = &.{},
+
+        parent_way: ?WayId = null,
+    } = .{},
+
+
+    fn clearPpDebugPoints(self: *RenderState) void {
+        gui.glDeleteBuffer(self.snapshot.pp_debug_point_buffer);
+        self.snapshot.num_pp_debug_points = 0;
+    }
+
+    fn updatePpDebugPoints(self: *RenderState, alloc: Allocator, enable: bool, pp: *const PathPlanner) void {
+        if (!enable) {
+            self.clearPpDebugPoints();
+            return;
+        }
+
+        var seen_gscores = std.ArrayList(NodeId).init(alloc);
+        defer seen_gscores.deinit();
+
+        for (0..pp.gscores.segment_starts.len - 1) |i| {
+            const start = pp.gscores.segment_starts[i];
+            const end = pp.gscores.segment_starts[i + 1];
+            for (pp.gscores.storage[start..end]) |score| {
+                if (score != std.math.inf(f32)) {
+                    seen_gscores.append(.{ .value = @intCast(i) }) catch return;
+                    break;
+                }
+            }
+        }
+
+        const new_point_buf = Renderer.createPointBuffer(seen_gscores.items);
+        if (self.snapshot.num_pp_debug_points != 0) {
+            gui.glDeleteBuffer(self.snapshot.pp_debug_point_buffer);
+        }
+        self.snapshot.pp_debug_point_buffer = new_point_buf;
+        self.snapshot.num_pp_debug_points = seen_gscores.items.len;
+    }
+
+    fn render(self: *RenderState, alloc: Allocator) void {
+        gui.glClearColor(0.0, 0.0, 0.0, 1.0);
+        gui.glClear(Gl.COLOR_BUFFER_BIT);
+
+        for (self.textures, 0..) |tex, i| {
+            var bound_texture_renderer = self.texture_renderer.bind();
+            const screen_space = tileLocScreenSpace(self.image_tile_metadata[i], self.snapshot.view_state, self.metadata.*);
+            bound_texture_renderer.render(
+                tex,
+                screen_space.center,
+                screen_space.scale,
+            );
+        }
+
+        var bound_renderer = self.renderer.bind();
+        bound_renderer.render(self.snapshot.view_state);
+
+        for (self.monitored_attributes.rendering.attributes.items) |monitored| {
+            bound_renderer.inner.r.set(monitored.color.r);
+            bound_renderer.inner.g.set(monitored.color.g);
+            bound_renderer.inner.b.set(monitored.color.b);
+            bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
+        }
+
+        if (self.path_planner.*) |*pp| {
+            if (self.debug_path_finding and pp.transit_state == .some) {
+                // FIXME: Bad panic
+                self.heuristic_renderer.feed(alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
+
+                var bound = self.heuristic_renderer.bind();
+                bound.render(self.snapshot.view_state);
+
+                bound_renderer = self.renderer.bind();
+            }
+        }
+
+        const transit_point_size = 10000.0;
+        bound_renderer.inner.point_size.set(transit_point_size * self.snapshot.view_state.zoom);
+        const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
+        bound_renderer.inner.r.set(0.3);
+        bound_renderer.inner.g.set(0.3);
+        bound_renderer.inner.b.set(1.0);
+        gui.glBindVertexArray(bound_renderer.inner.vao);
+        gui.glDrawArrays(Gl.POINTS, @intCast(self.metadata.transit_node_start_idx), @intCast(len));
+
+        bound_renderer.inner.r.set(1.0);
+        bound_renderer.inner.g.set(0.0);
+        bound_renderer.inner.b.set(0.0);
+        bound_renderer.inner.point_size.set(10.0);
+        if (self.path_start) |s| {
+            bound_renderer.renderPoints(&.{s}, Gl.POINTS);
+        }
+
+        if (self.path_end) |end| {
+            bound_renderer.renderPoints(&.{end}, Gl.POINTS);
+        }
+
+        if (self.path_planner.*) |*pp| {
+            if (self.snapshot.num_pp_debug_points > 0) {
+                bound_renderer.inner.point_size.set(10.0);
+                bound_renderer.inner.r.set(1.0);
+                bound_renderer.inner.g.set(0.0);
+                bound_renderer.inner.b.set(0.0);
+                bound_renderer.renderIndexBuffer(
+                    self.snapshot.pp_debug_point_buffer,
+                    self.snapshot.num_pp_debug_points,
+                    Gl.POINTS,
+                );
+            }
+
+            if (pp.final_node) |final_node| {
+                const res = pp.reconstructPath(final_node.id) catch return;
+                defer alloc.free(res);
+
+                bound_renderer.inner.r.set(1.0);
+                bound_renderer.inner.g.set(0.0);
+                bound_renderer.inner.b.set(0.0);
+                bound_renderer.renderPoints(res, Gl.LINE_STRIP);
+            }
+        }
+
+        for (self.way_finding_debug.items) |item| {
+            bound_renderer.inner.r.set(0.0);
+            bound_renderer.inner.g.set(1.0);
+            bound_renderer.inner.b.set(1.0);
+            bound_renderer.inner.point_size.set(item.size);
+            bound_renderer.renderCoords(&.{ item.pos.x, item.pos.y }, Gl.POINTS);
+        }
+
+        if (self.snapshot.parent_way) |parent|  {
+            bound_renderer.inner.r.set(0);
+            bound_renderer.inner.g.set(0);
+            bound_renderer.inner.b.set(1);
+            bound_renderer.renderSelectedWay(self.ways.get(parent));
+        }
+
+        bound_renderer.inner.r.set(0.0);
+        bound_renderer.inner.g.set(1.0);
+        bound_renderer.inner.b.set(1.0);
+
+        bound_renderer.inner.point_size.set(10.0);
+        bound_renderer.renderPoints(self.snapshot.neighbor_points, Gl.POINTS);
+
+        if (self.snapshot.closest_way) |way_id| {
+            bound_renderer.renderSelectedWay(self.ways.get(way_id));
+        }
+
+        if (self.debug_way_finding) blk: {
+            const closest_point = self.snapshot.closest_way_point orelse break :blk;
+            bound_renderer.renderCoords(&.{ self.snapshot.view_state.center.x, self.snapshot.view_state.center.y, closest_point.x, closest_point.y }, Gl.LINE_STRIP);
+        }
+
+        bound_renderer.inner.point_size.set(10.0);
+        bound_renderer.renderPoints(&.{self.closest_node}, Gl.POINTS);
+
+    }
 
     fn deinit(self: *RenderState, alloc: Allocator) void {
         self.way_finding_debug.deinit(alloc);
@@ -255,12 +432,19 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
 
         const node_id = way.node_ids[calc.min_way_segment];
         const neighbor_id = way.node_ids[calc.neighbor_segment];
-        self.render_state.closest_way_nodes = .{
+        self.render_state.snapshot.closest_way_nodes = .{
             node_id,
             neighbor_id,
         };
-        self.render_state.closest_way_point = calc.min_dist_loc;
-        self.render_state.closest_way = calc.min_way;
+
+        if (self.debug_parenting) {
+            if (self.point_pair_to_parent.get(node_id, neighbor_id)) |parent| {
+                self.render_state.snapshot.parent_way = parent;
+            }
+        }
+
+        self.render_state.snapshot.closest_way_point = calc.min_dist_loc;
+        self.render_state.snapshot.closest_way = calc.min_way;
 
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
@@ -279,136 +463,158 @@ pub fn zoomOut(self: *App) void {
     self.view_state.zoom *= 0.5;
 }
 
-pub fn render(self: *App) void {
-    gui.glClearColor(0.0, 0.0, 0.0, 1.0);
-    gui.glClear(Gl.COLOR_BUFFER_BIT);
-
-    for (self.render_state.textures, 0..) |tex, i| {
-        var bound_texture_renderer = self.render_state.texture_renderer.bind();
-        const screen_space = tileLocScreenSpace(self.render_state.image_tile_metadata[i], self.view_state, self.metadata.*);
-        bound_texture_renderer.render(
-            tex,
-            screen_space.center,
-            screen_space.scale,
-        );
-    }
-
-    var bound_renderer = self.render_state.renderer.bind();
-    bound_renderer.render(self.view_state);
-
-    for (self.monitored_attributes.rendering.attributes.items) |monitored| {
-        bound_renderer.inner.r.set(monitored.color.r);
-        bound_renderer.inner.g.set(monitored.color.g);
-        bound_renderer.inner.b.set(monitored.color.b);
-        bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
-    }
-
-    if (self.path_planner) |*pp| {
-        if (self.debug_path_finding and pp.transit_state == .some) {
-            // FIXME: Bad panic
-            self.render_state.heuristic_renderer.feed(self.alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
-
-            var bound = self.render_state.heuristic_renderer.bind();
-            bound.render(self.view_state);
-
-            bound_renderer = self.render_state.renderer.bind();
+pub fn updateRenderState(self: *App) void {
+    const pp_debug_points_available = self.render_state.snapshot.num_pp_debug_points != 0;
+    if (self.debug_path_finding != pp_debug_points_available) {
+        if (self.path_planner) |*pp| {
+            self.render_state.updatePpDebugPoints(self.alloc, self.debug_path_finding, pp);
         }
     }
-
-    const transit_point_size = 10000.0;
-    bound_renderer.inner.point_size.set(transit_point_size * self.view_state.zoom);
-    const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
-    bound_renderer.inner.r.set(0.3);
-    bound_renderer.inner.g.set(0.3);
-    bound_renderer.inner.b.set(1.0);
-    gui.glBindVertexArray(bound_renderer.inner.vao);
-    gui.glDrawArrays(Gl.POINTS, @intCast(self.metadata.transit_node_start_idx), @intCast(len));
-
-    bound_renderer.inner.r.set(1.0);
-    bound_renderer.inner.g.set(0.0);
-    bound_renderer.inner.b.set(0.0);
-    bound_renderer.inner.point_size.set(10.0);
-    if (self.path_start) |s| {
-        bound_renderer.renderPoints(&.{s}, Gl.POINTS);
-    }
-
-    if (self.path_end) |end| {
-        bound_renderer.renderPoints(&.{end}, Gl.POINTS);
-    }
-
-    if (self.path_planner) |pp| {
-        if (self.debug_path_finding) {
-            var seen_gscores = std.ArrayList(NodeId).init(self.alloc);
-            defer seen_gscores.deinit();
-
-            for (0..pp.gscores.segment_starts.len - 1) |i| {
-                const start = pp.gscores.segment_starts[i];
-                const end = pp.gscores.segment_starts[i + 1];
-                for (pp.gscores.storage[start..end]) |score| {
-                    if (score != std.math.inf(f32)) {
-                        seen_gscores.append(.{ .value = @intCast(i) }) catch return;
-                        break;
-                    }
-                }
-            }
-
-            bound_renderer.inner.point_size.set(10.0);
-            bound_renderer.inner.r.set(1.0);
-            bound_renderer.inner.g.set(0.0);
-            bound_renderer.inner.b.set(0.0);
-            bound_renderer.renderPoints(seen_gscores.items, Gl.POINTS);
-        }
-
-        if (pp.final_node) |final_node| {
-            const res = pp.reconstructPath(final_node.id) catch return;
-            defer self.alloc.free(res);
-
-            bound_renderer.inner.r.set(1.0);
-            bound_renderer.inner.g.set(0.0);
-            bound_renderer.inner.b.set(0.0);
-            bound_renderer.renderPoints(res, Gl.LINE_STRIP);
-        }
-    }
-
-    for (self.render_state.way_finding_debug.items) |item| {
-        bound_renderer.inner.r.set(0.0);
-        bound_renderer.inner.g.set(1.0);
-        bound_renderer.inner.b.set(1.0);
-        bound_renderer.inner.point_size.set(item.size);
-        bound_renderer.renderCoords(&.{ item.pos.x, item.pos.y }, Gl.POINTS);
-    }
-
-    if (self.debug_parenting) blk: {
-        const nodes = self.render_state.closest_way_nodes orelse break :blk;
-        if (self.point_pair_to_parent.get(nodes[0], nodes[1])) |parent| {
-            bound_renderer.inner.r.set(0);
-            bound_renderer.inner.g.set(0);
-            bound_renderer.inner.b.set(1);
-            bound_renderer.renderSelectedWay(self.ways.get(parent));
-        }
-    }
-
-    bound_renderer.inner.r.set(0.0);
-    bound_renderer.inner.g.set(1.0);
-    bound_renderer.inner.b.set(1.0);
 
     if (self.debug_point_neighbors) {
-        const neighbors = self.adjacency_map.getOsmNeighbors(self.closest_node);
-        bound_renderer.inner.point_size.set(10.0);
-        bound_renderer.renderPoints(neighbors, Gl.POINTS);
+        self.render_state.snapshot.neighbor_points = self.adjacency_map.getOsmNeighbors(self.closest_node);
+    } else {
+        self.render_state.snapshot.neighbor_points = &.{};
     }
 
-    if (self.render_state.closest_way) |way_id| {
-        bound_renderer.renderSelectedWay(self.ways.get(way_id));
-    }
+    self.render_state.snapshot.view_state = self.view_state;
+    self.render_state.metadata = self.metadata;
+    // FIXME: Some of these should be long lived
+    self.render_state.monitored_attributes = &self.monitored_attributes;
+    self.render_state.path_planner = &self.path_planner;
+    self.render_state.points = &self.points;
+    self.render_state.ways = &self.ways;
+    self.render_state.path_start = self.path_start;
+    self.render_state.path_end = self.path_end;
+    self.render_state.debug_way_finding = self.debug_way_finding;
+    self.render_state.debug_path_finding = self.debug_path_finding;
+    self.render_state.closest_node = self.closest_node;
 
-    if (self.debug_way_finding) blk: {
-        const closest_point = self.render_state.closest_way_point orelse break :blk;
-        bound_renderer.renderCoords(&.{ self.view_state.center.x, self.view_state.center.y, closest_point.x, closest_point.y }, Gl.LINE_STRIP);
-    }
+}
 
-    bound_renderer.inner.point_size.set(10.0);
-    bound_renderer.renderPoints(&.{self.closest_node}, Gl.POINTS);
+pub fn render(self: *App) void {
+    self.updateRenderState();
+    self.render_state.render(self.alloc);
+
+    //gui.glClearColor(0.0, 0.0, 0.0, 1.0);
+    //gui.glClear(Gl.COLOR_BUFFER_BIT);
+
+    //for (self.render_state.textures, 0..) |tex, i| {
+    //    var bound_texture_renderer = self.render_state.texture_renderer.bind();
+    //    const screen_space = tileLocScreenSpace(self.render_state.image_tile_metadata[i], self.view_state, self.metadata.*);
+    //    bound_texture_renderer.render(
+    //        tex,
+    //        screen_space.center,
+    //        screen_space.scale,
+    //    );
+    //}
+
+    //var bound_renderer = self.render_state.renderer.bind();
+    //bound_renderer.render(self.view_state);
+
+    //for (self.monitored_attributes.rendering.attributes.items) |monitored| {
+    //    bound_renderer.inner.r.set(monitored.color.r);
+    //    bound_renderer.inner.g.set(monitored.color.g);
+    //    bound_renderer.inner.b.set(monitored.color.b);
+    //    bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
+    //}
+
+    //if (self.path_planner) |*pp| {
+    //    if (self.debug_path_finding and pp.transit_state == .some) {
+    //        // FIXME: Bad panic
+    //        self.render_state.heuristic_renderer.feed(self.alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
+
+    //        var bound = self.render_state.heuristic_renderer.bind();
+    //        bound.render(self.view_state);
+
+    //        bound_renderer = self.render_state.renderer.bind();
+    //    }
+    //}
+
+    //const transit_point_size = 10000.0;
+    //bound_renderer.inner.point_size.set(transit_point_size * self.view_state.zoom);
+    //const len = self.points.numPoints() - self.metadata.transit_node_start_idx;
+    //bound_renderer.inner.r.set(0.3);
+    //bound_renderer.inner.g.set(0.3);
+    //bound_renderer.inner.b.set(1.0);
+    //gui.glBindVertexArray(bound_renderer.inner.vao);
+    //gui.glDrawArrays(Gl.POINTS, @intCast(self.metadata.transit_node_start_idx), @intCast(len));
+
+    //bound_renderer.inner.r.set(1.0);
+    //bound_renderer.inner.g.set(0.0);
+    //bound_renderer.inner.b.set(0.0);
+    //bound_renderer.inner.point_size.set(10.0);
+    //if (self.path_start) |s| {
+    //    bound_renderer.renderPoints(&.{s}, Gl.POINTS);
+    //}
+
+    //if (self.path_end) |end| {
+    //    bound_renderer.renderPoints(&.{end}, Gl.POINTS);
+    //}
+
+    //if (self.path_planner) |pp| {
+    //    if (self.render_state.num_pp_debug_points > 0) {
+    //        bound_renderer.inner.point_size.set(10.0);
+    //        bound_renderer.inner.r.set(1.0);
+    //        bound_renderer.inner.g.set(0.0);
+    //        bound_renderer.inner.b.set(0.0);
+    //        bound_renderer.renderIndexBuffer(
+    //            self.render_state.pp_debug_point_buffer,
+    //            self.render_state.num_pp_debug_points,
+    //            Gl.POINTS,
+    //        );
+    //    }
+
+    //    if (pp.final_node) |final_node| {
+    //        const res = pp.reconstructPath(final_node.id) catch return;
+    //        defer self.alloc.free(res);
+
+    //        bound_renderer.inner.r.set(1.0);
+    //        bound_renderer.inner.g.set(0.0);
+    //        bound_renderer.inner.b.set(0.0);
+    //        bound_renderer.renderPoints(res, Gl.LINE_STRIP);
+    //    }
+    //}
+
+    //for (self.render_state.way_finding_debug.items) |item| {
+    //    bound_renderer.inner.r.set(0.0);
+    //    bound_renderer.inner.g.set(1.0);
+    //    bound_renderer.inner.b.set(1.0);
+    //    bound_renderer.inner.point_size.set(item.size);
+    //    bound_renderer.renderCoords(&.{ item.pos.x, item.pos.y }, Gl.POINTS);
+    //}
+
+    //if (self.debug_parenting) blk: {
+    //    const nodes = self.render_state.closest_way_nodes orelse break :blk;
+    //    if (self.point_pair_to_parent.get(nodes[0], nodes[1])) |parent| {
+    //        bound_renderer.inner.r.set(0);
+    //        bound_renderer.inner.g.set(0);
+    //        bound_renderer.inner.b.set(1);
+    //        bound_renderer.renderSelectedWay(self.ways.get(parent));
+    //    }
+    //}
+
+    //bound_renderer.inner.r.set(0.0);
+    //bound_renderer.inner.g.set(1.0);
+    //bound_renderer.inner.b.set(1.0);
+
+    //if (self.debug_point_neighbors) {
+    //    const neighbors = self.adjacency_map.getOsmNeighbors(self.closest_node);
+    //    bound_renderer.inner.point_size.set(10.0);
+    //    bound_renderer.renderPoints(neighbors, Gl.POINTS);
+    //}
+
+    //if (self.render_state.closest_way) |way_id| {
+    //    bound_renderer.renderSelectedWay(self.ways.get(way_id));
+    //}
+
+    //if (self.debug_way_finding) blk: {
+    //    const closest_point = self.render_state.closest_way_point orelse break :blk;
+    //    bound_renderer.renderCoords(&.{ self.view_state.center.x, self.view_state.center.y, closest_point.x, closest_point.y }, Gl.LINE_STRIP);
+    //}
+
+    //bound_renderer.inner.point_size.set(10.0);
+    //bound_renderer.renderPoints(&.{self.closest_node}, Gl.POINTS);
 }
 
 pub fn startPath(self: *App) !void {
@@ -420,6 +626,8 @@ pub fn startPath(self: *App) !void {
 
 pub fn stepPath(self: *App, amount: u32) !void {
     if (self.path_planner) |*pp| {
+        defer self.render_state.updatePpDebugPoints(self.alloc, self.debug_path_finding, pp);
+
         for (0..amount) |_| {
             if (try pp.step()) |path| {
                 path.deinit(self.alloc);
@@ -457,12 +665,15 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
     if (self.path_planner) |*pp| pp.deinit();
     self.path_planner = new_pp;
 
+    self.render_state.updatePpDebugPoints(self.alloc, self.debug_path_finding, &self.path_planner.?);
+
     if (self.debug_path_finding) {
         return;
     }
 
     if (self.path_planner) |*pp| {
         if (pp.run()) |path| {
+            self.render_state.updatePpDebugPoints(self.alloc, self.debug_path_finding, pp);
             path.deinit(self.alloc);
         } else |_| {}
     }
