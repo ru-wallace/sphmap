@@ -78,8 +78,7 @@ pub fn init(point_data: []const f32, index_data: []const u32, transit_street_spl
     };
 }
 
-pub fn createPointBuffer(point_ids: []const NodeId) i32 {
-    const ebo = gui.glCreateBuffer();
+pub fn updatePointBuffer(ebo: i32, point_ids: []const NodeId) void {
     gui.glBindBuffer(Gl.ELEMENT_ARRAY_BUFFER, ebo);
     gui.glBufferData(
         Gl.ELEMENT_ARRAY_BUFFER,
@@ -87,7 +86,6 @@ pub fn createPointBuffer(point_ids: []const NodeId) i32 {
         point_ids.len * 4,
         Gl.STATIC_DRAW,
     );
-    return ebo;
 }
 
 pub fn bind(self: *Renderer) BoundRenderer {
