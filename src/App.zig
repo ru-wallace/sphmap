@@ -35,10 +35,10 @@ const WayFindingDebugElem = struct {
     pos: Point,
 };
 
-const AppSnapshot = struct {
+const RenderSnapshot = struct {
     view_state: ViewState = undefined,
-    pp_debug_point_buffer: i32,
-    num_pp_debug_points: usize = 0,
+
+    debug_points: []NodeId = &.{},
 
     closest_node: NodeId = .{ .value = 0 },
     closest_way: ?WayId = null,
@@ -55,45 +55,33 @@ const AppSnapshot = struct {
     path_start: ?NodeId = null,
     path_end: ?NodeId = null,
 
-    planned_path: i32,
-    planned_path_len: usize = 0,
+    planned_path: []const NodeId = &.{},
 
     render_heuristic: bool = false,
-};
 
-const AppRenderer = struct {
-    renderer: Renderer,
-    heuristic_renderer: HeuristicRenderer,
-    texture_renderer: TextureRenderer,
-
-    metadata: *const Metadata = undefined,
-    monitored_attributes: *const monitored_attributes.MonitoredAttributeTracker = undefined,
-
-    // Things for sure we want to keep
-    points: *const PointLookup = undefined,
-    ways: *const WayLookup = undefined,
-    image_tile_metadata: ImageTileData,
-    textures: []i32,
-
-    snapshot: AppSnapshot,
-
-    fn clearPpDebugPoints(self: *AppRenderer) void {
-        self.snapshot.num_pp_debug_points = 0;
+    fn deinit(self: *RenderSnapshot, alloc: Allocator) void {
+        alloc.free(self.debug_points);
+        alloc.free(self.planned_path);
+        self.way_finding_debug.deinit(alloc);
     }
 
-    fn updatePathPlanner(self: *AppRenderer, alloc: Allocator, debug_enable: bool, pp: *const PathPlanner) void {
-        if (pp.final_node) |final_node| {
-            const res = pp.reconstructPath(final_node.id) catch return;
-            defer alloc.free(res);
+    fn clearPpDebugPoints(self: *RenderSnapshot, alloc: Allocator) void {
+        alloc.free(self.debug_points);
+        self.debug_points = &.{};
+    }
 
-            Renderer.updatePointBuffer(self.snapshot.planned_path, res);
-            self.snapshot.planned_path_len = res.len;
+    fn updatePathPlanner(self: *RenderSnapshot, alloc: Allocator, debug_enable: bool, pp: *const PathPlanner) !void {
+        if (pp.final_node) |final_node| {
+            const new_path = pp.reconstructPath(final_node.id) catch return;
+            alloc.free(self.planned_path);
+            self.planned_path = new_path;
         } else {
-            self.snapshot.planned_path_len = 0;
+            alloc.free(self.planned_path);
+            self.planned_path = &.{};
         }
 
         if (!debug_enable) {
-            self.clearPpDebugPoints();
+            self.clearPpDebugPoints(alloc);
             return;
         }
 
@@ -111,11 +99,41 @@ const AppRenderer = struct {
             }
         }
 
-        Renderer.updatePointBuffer(self.snapshot.pp_debug_point_buffer, seen_gscores.items);
-        self.snapshot.num_pp_debug_points = seen_gscores.items.len;
+        alloc.free(self.debug_points);
+        self.debug_points = try seen_gscores.toOwnedSlice();
     }
+};
+
+const AppRenderer = struct {
+    renderer: Renderer,
+    heuristic_renderer: HeuristicRenderer,
+    texture_renderer: TextureRenderer,
+
+    metadata: *const Metadata = undefined,
+    monitored_attributes: *const monitored_attributes.MonitoredAttributeTracker = undefined,
+
+    // Things for sure we want to keep
+    points: *const PointLookup = undefined,
+    ways: *const WayLookup = undefined,
+    image_tile_metadata: ImageTileData,
+    textures: []i32,
+
+    pp_debug_point_buffer: i32,
+    num_pp_debug_points: usize = 0,
+
+    planned_path: i32,
+    planned_path_len: usize = 0,
+
+    snapshot: RenderSnapshot = .{},
 
     fn render(self: *AppRenderer) void {
+        // FIXME: This should be set somewhere else
+        Renderer.updatePointBuffer(self.pp_debug_point_buffer, self.snapshot.debug_points);
+        self.num_pp_debug_points = self.snapshot.debug_points.len;
+
+        Renderer.updatePointBuffer(self.planned_path, self.snapshot.planned_path);
+        self.planned_path_len = self.snapshot.planned_path.len;
+
         gui.glClearColor(0.0, 0.0, 0.0, 1.0);
         gui.glClear(Gl.COLOR_BUFFER_BIT);
 
@@ -166,23 +184,23 @@ const AppRenderer = struct {
             bound_renderer.renderPoints(&.{end}, Gl.POINTS);
         }
 
-        if (self.snapshot.num_pp_debug_points > 0) {
+        if (self.num_pp_debug_points > 0) {
             bound_renderer.inner.point_size.set(10.0);
             bound_renderer.inner.r.set(1.0);
             bound_renderer.inner.g.set(0.0);
             bound_renderer.inner.b.set(0.0);
             bound_renderer.renderIndexBuffer(
-                self.snapshot.pp_debug_point_buffer,
-                self.snapshot.num_pp_debug_points,
+                self.pp_debug_point_buffer,
+                self.num_pp_debug_points,
                 Gl.POINTS,
             );
         }
 
-        if (self.snapshot.planned_path_len > 0) {
+        if (self.planned_path_len > 0) {
             bound_renderer.inner.r.set(1.0);
             bound_renderer.inner.g.set(0.0);
             bound_renderer.inner.b.set(0.0);
-            bound_renderer.renderIndexBuffer(self.snapshot.planned_path, self.snapshot.planned_path_len, Gl.LINE_STRIP);
+            bound_renderer.renderIndexBuffer(self.planned_path, self.planned_path_len, Gl.LINE_STRIP);
         }
 
         for (self.snapshot.way_finding_debug.items) |item| {
@@ -220,7 +238,7 @@ const AppRenderer = struct {
     }
 
     fn deinit(self: *AppRenderer, alloc: Allocator) void {
-        self.snapshot.way_finding_debug.deinit(alloc);
+        self.snapshot.deinit(alloc);
         alloc.free(self.textures);
     }
 };
@@ -331,10 +349,8 @@ pub fn init(alloc: Allocator, aspect_val: f32, map_data_buf: []u8, metadata: *co
             .texture_renderer = texture_renderer,
             .heuristic_renderer = heuristic_renderer,
             .image_tile_metadata = image_tile_metadata,
-            .snapshot = .{
-                .pp_debug_point_buffer = gui.glCreateBuffer(),
-                .planned_path = gui.glCreateBuffer(),
-            },
+            .pp_debug_point_buffer = gui.glCreateBuffer(),
+            .planned_path = gui.glCreateBuffer(),
             .textures = textures,
         },
         // Sibling reference
@@ -441,11 +457,19 @@ pub fn onMouseMove(self: *App, x: f32, y: f32) !void {
             }
         }
 
-        self.render_state.snapshot.closest_way_point = calc.min_dist_loc;
+        if (self.debug_way_finding) {
+            self.render_state.snapshot.closest_way_point = calc.min_dist_loc;
+        } else {
+            self.render_state.snapshot.closest_way_point = null;
+        }
+
         self.render_state.snapshot.closest_way = calc.min_way;
 
         self.closest_node = node_id;
         gui.setNodeId(node_id.value);
+    } else {
+        self.render_state.snapshot.closest_way_point = null;
+        self.render_state.snapshot.closest_way = null;
     }
 }
 
@@ -462,10 +486,11 @@ pub fn zoomOut(self: *App) void {
 }
 
 pub fn updateRenderState(self: *App) void {
-    const pp_debug_points_available = self.render_state.snapshot.num_pp_debug_points != 0;
+    const pp_debug_points_available = self.render_state.num_pp_debug_points != 0;
     if (self.debug_path_finding != pp_debug_points_available) {
         if (self.path_planner) |*pp| {
-            self.render_state.updatePathPlanner(self.alloc, self.debug_path_finding, pp);
+            // FIXME: bad panic
+            self.render_state.snapshot.updatePathPlanner(self.alloc, self.debug_path_finding, pp) catch @panic("uh oh");
         }
     }
 
@@ -626,14 +651,14 @@ pub fn startPath(self: *App) !void {
 
 pub fn stepPath(self: *App, amount: u32) !void {
     if (self.path_planner) |*pp| {
-        defer self.render_state.updatePathPlanner(self.alloc, self.debug_path_finding, pp);
-
         for (0..amount) |_| {
             if (try pp.step()) |path| {
                 path.deinit(self.alloc);
-                return;
+                break;
             }
         }
+
+        try self.render_state.snapshot.updatePathPlanner(self.alloc, self.debug_path_finding, pp);
     }
 }
 
@@ -665,7 +690,7 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
     if (self.path_planner) |*pp| pp.deinit();
     self.path_planner = new_pp;
 
-    self.render_state.updatePathPlanner(self.alloc, self.debug_path_finding, &self.path_planner.?);
+    try self.render_state.snapshot.updatePathPlanner(self.alloc, self.debug_path_finding, &self.path_planner.?);
 
     if (self.debug_path_finding) {
         return;
@@ -673,7 +698,7 @@ fn resetPathPlanner(self: *App, start: NodeId, end: NodeId) !void {
 
     if (self.path_planner) |*pp| {
         if (pp.run()) |path| {
-            self.render_state.updatePathPlanner(self.alloc, self.debug_path_finding, pp);
+            try self.render_state.snapshot.updatePathPlanner(self.alloc, self.debug_path_finding, pp);
             path.deinit(self.alloc);
         } else |_| {}
     }
