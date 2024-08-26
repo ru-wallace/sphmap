@@ -35,60 +35,61 @@ const WayFindingDebugElem = struct {
     pos: Point,
 };
 
-const RenderState = struct {
+const AppSnapshot = struct {
+    view_state: ViewState = undefined,
+    pp_debug_point_buffer: i32,
+    num_pp_debug_points: usize = 0,
+
+    closest_node: NodeId = .{ .value = 0 },
+    closest_way: ?WayId = null,
+    closest_way_nodes: ?[2]NodeId = null,
+
+    neighbor_points: []const NodeId = &.{},
+
+    parent_way: ?WayId = null,
+
+    // Probably can turn into vbo or ebo
+    way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
+    closest_way_point: ?Point = null,
+
+    path_start: ?NodeId = null,
+    path_end: ?NodeId = null,
+
+    planned_path: i32,
+    planned_path_len: usize = 0,
+
+    render_heuristic: bool = false,
+};
+
+const AppRenderer = struct {
     renderer: Renderer,
     heuristic_renderer: HeuristicRenderer,
     texture_renderer: TextureRenderer,
 
     metadata: *const Metadata = undefined,
     monitored_attributes: *const monitored_attributes.MonitoredAttributeTracker = undefined,
-    path_planner: *const ?PathPlanner = undefined,
-    closest_node: NodeId = undefined,
-
-    debug_path_finding: bool = false,
 
     // Things for sure we want to keep
-    //
-    // only valid if num_pp_debug_points > 0
     points: *const PointLookup = undefined,
     ways: *const WayLookup = undefined,
     image_tile_metadata: ImageTileData,
     textures: []i32,
 
-    snapshot: struct {
-        view_state: ViewState = undefined,
-        pp_debug_point_buffer: i32,
-        num_pp_debug_points: usize = 0,
+    snapshot: AppSnapshot,
 
-        closest_way: ?WayId = null,
-        closest_way_nodes: ?[2]NodeId = null,
-
-        neighbor_points: []const NodeId = &.{},
-
-        parent_way: ?WayId = null,
-
-        // Probably can turn into vbo or ebo
-        way_finding_debug: std.ArrayListUnmanaged(WayFindingDebugElem) = .{},
-        closest_way_point: ?Point = null,
-
-        path_start: ?NodeId = null,
-        path_end: ?NodeId = null,
-
-        planned_path: i32,
-        planned_path_len: usize = 0,
-    },
-
-    fn clearPpDebugPoints(self: *RenderState) void {
+    fn clearPpDebugPoints(self: *AppRenderer) void {
         self.snapshot.num_pp_debug_points = 0;
     }
 
-    fn updatePathPlanner(self: *RenderState, alloc: Allocator, debug_enable: bool, pp: *const PathPlanner) void {
+    fn updatePathPlanner(self: *AppRenderer, alloc: Allocator, debug_enable: bool, pp: *const PathPlanner) void {
         if (pp.final_node) |final_node| {
             const res = pp.reconstructPath(final_node.id) catch return;
             defer alloc.free(res);
 
             Renderer.updatePointBuffer(self.snapshot.planned_path, res);
             self.snapshot.planned_path_len = res.len;
+        } else {
+            self.snapshot.planned_path_len = 0;
         }
 
         if (!debug_enable) {
@@ -114,7 +115,7 @@ const RenderState = struct {
         self.snapshot.num_pp_debug_points = seen_gscores.items.len;
     }
 
-    fn render(self: *RenderState, alloc: Allocator) void {
+    fn render(self: *AppRenderer) void {
         gui.glClearColor(0.0, 0.0, 0.0, 1.0);
         gui.glClear(Gl.COLOR_BUFFER_BIT);
 
@@ -138,16 +139,10 @@ const RenderState = struct {
             bound_renderer.renderIndexBuffer(monitored.index_buffer, monitored.index_buffer_len, Gl.LINE_STRIP);
         }
 
-        if (self.path_planner.*) |*pp| {
-            if (self.debug_path_finding and pp.transit_state == .some) {
-                // FIXME: Bad panic
-                self.heuristic_renderer.feed(alloc, pp.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
-
-                var bound = self.heuristic_renderer.bind();
-                bound.render(self.snapshot.view_state);
-
-                bound_renderer = self.renderer.bind();
-            }
+        if (self.snapshot.render_heuristic) {
+            var bound = self.heuristic_renderer.bind();
+            bound.render(self.snapshot.view_state);
+            bound_renderer = self.renderer.bind();
         }
 
         const transit_point_size = 10000.0;
@@ -221,10 +216,10 @@ const RenderState = struct {
         }
 
         bound_renderer.inner.point_size.set(10.0);
-        bound_renderer.renderPoints(&.{self.closest_node}, Gl.POINTS);
+        bound_renderer.renderPoints(&.{self.snapshot.closest_node}, Gl.POINTS);
     }
 
-    fn deinit(self: *RenderState, alloc: Allocator) void {
+    fn deinit(self: *AppRenderer, alloc: Allocator) void {
         self.snapshot.way_finding_debug.deinit(alloc);
         alloc.free(self.textures);
     }
@@ -245,7 +240,7 @@ closest_node: NodeId = NodeId{ .value = 0 },
 transit_trip_times: map_data.TransitTripTimes,
 path_start: ?NodeId = null,
 path_end: ?NodeId = null,
-render_state: RenderState,
+render_state: AppRenderer,
 monitored_attributes: monitored_attributes.MonitoredAttributeTracker,
 point_pair_to_parent: map_data.PointPairToWayMap,
 turning_cost: f32 = 0.0,
@@ -474,6 +469,12 @@ pub fn updateRenderState(self: *App) void {
         }
     }
 
+    self.render_state.snapshot.render_heuristic = self.path_planner != null and self.debug_path_finding and self.path_planner.?.transit_state == .some;
+    if (self.render_state.snapshot.render_heuristic) {
+        // FIXME: bad panic
+        self.render_state.heuristic_renderer.feed(self.alloc, self.path_planner.?.transit_state.some.closest_stop_lookup) catch @panic("uh oh");
+    }
+
     if (self.debug_point_neighbors) {
         self.render_state.snapshot.neighbor_points = self.adjacency_map.getOsmNeighbors(self.closest_node);
     } else {
@@ -484,18 +485,16 @@ pub fn updateRenderState(self: *App) void {
     self.render_state.metadata = self.metadata;
     // FIXME: Some of these should be long lived
     self.render_state.monitored_attributes = &self.monitored_attributes;
-    self.render_state.path_planner = &self.path_planner;
     self.render_state.points = &self.points;
     self.render_state.ways = &self.ways;
     self.render_state.snapshot.path_start = self.path_start;
     self.render_state.snapshot.path_end = self.path_end;
-    self.render_state.debug_path_finding = self.debug_path_finding;
-    self.render_state.closest_node = self.closest_node;
+    self.render_state.snapshot.closest_node = self.closest_node;
 }
 
 pub fn render(self: *App) void {
     self.updateRenderState();
-    self.render_state.render(self.alloc);
+    self.render_state.render();
 
     //gui.glClearColor(0.0, 0.0, 0.0, 1.0);
     //gui.glClear(Gl.COLOR_BUFFER_BIT);
@@ -688,6 +687,7 @@ pub fn monitorWayAttribute(self: *App, k: [*]const u8, v: [*]const u8) !void {
     const k_id = self.string_table.findByPointerAddress(k);
     const v_id = self.string_table.findByPointerAddress(v);
 
+    // FIXME: index buffers have to be updated on snapshot
     const attribute_id = try self.monitored_attributes.push(k_id, v_id);
     const k_full = self.string_table.get(k_id);
     const v_full = self.string_table.get(v_id);
