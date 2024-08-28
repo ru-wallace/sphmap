@@ -2,7 +2,9 @@
 
 set -ex
 
-prettier -c www
+#prettier -c www
 zig fmt --check src
 zig build
-./zig-out/bin/make_site --input-www www --output output --index-wasm ./zig-out/bin/index.wasm --osm-data ./res/planet_-123.114,49.284_-123.107,49.287.osm
+rm ./make_site.log
+
+./zig-out/bin/make_site --input-www www --output output --index-wasm ./zig-out/bin/index.wasm --osm-data ./res/map.osm

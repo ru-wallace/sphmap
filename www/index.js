@@ -45,7 +45,8 @@ class WasmHandler {
     const positionBuffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
-    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
+    let vertexPosition = gl.getUniformLocWasm(this.gl.program)
+    this.gl.vertexAttribPointer(vertexPosition, 2, this.gl.FLOAT, false, 0, 0);
     this.gl.enableVertexAttribArray(0);
   }
 
@@ -73,6 +74,16 @@ class WasmHandler {
 
   glBindVertexArray(vao) {
     this.gl.bindVertexArray(this.vaos[vao]);
+  }
+
+  glCreateColourBuffer(ptr, len) {
+    const colours = new Float32Array(this.memory.buffer, ptr, len);
+    const colourBuffer = this.gl.createBuffer()
+    this.gl.bindBuffer(gl.ARRAY_BUFFER, colourBuffer);
+    this.gl.bufferData(gl.ARRAY_BUFFER, colours, gl.STATIC_DRAW);
+    
+
+    
   }
 
   glUseProgram(program) {

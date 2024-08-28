@@ -6,12 +6,21 @@ const Allocator = std.mem.Allocator;
 
 const Userdata = struct {
     points_out: std.io.AnyWriter,
+    log: std.io.AnyWriter,
     metadata: Metadata = .{},
     node_id_idx_map: std.AutoHashMap(i64, usize),
     num_nodes: u64 = 0,
+    num_refs: u64 = 0,
+    num_ways: u64 = 0,
+    way_id_colour_map: std.AutoHashMap(i64, [4]f32),
+
+    stored_ways: std.ArrayList(i64),
+    stored_colour: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 },
 
     fn deinit(self: *Userdata) void {
         self.node_id_idx_map.deinit();
+        self.way_id_colour_map.deinit();
+        self.stored_ways.deinit();
     }
 
     fn handleNode(user_data: *Userdata, attrs: *XmlParser.XmlAttrIter) void {
@@ -47,6 +56,24 @@ const Userdata = struct {
         user_data.points_out.writeAll(std.mem.asBytes(&lon)) catch unreachable;
         user_data.points_out.writeAll(std.mem.asBytes(&lat)) catch unreachable;
     }
+
+    fn handleWay(user_data: *Userdata, attrs: *XmlParser.XmlAttrIter) void {
+        defer user_data.num_refs += 1;
+        defer user_data.num_ways += 1;
+
+        user_data.points_out.writeInt(u32, 0xffffffff, .little) catch unreachable;
+
+        var way_id_opt: ?[]const u8 = null;
+        while (attrs.next()) |attr| {
+            if (std.mem.eql(u8, attr.key, "id")) {
+                way_id_opt = attr.val;
+            }
+        }
+
+        const way_id_s = way_id_opt orelse return;
+        const way_id = std.fmt.parseInt(i64, way_id_s, 10) catch return;
+        user_data.way_id_colour_map.put(way_id, .{ 1.0, 1.0, 1.0, 1.0 }) catch unreachable;
+    }
 };
 
 fn findAttributeVal(key: []const u8, attrs: *XmlParser.XmlAttrIter) ?[]const u8 {
@@ -59,6 +86,43 @@ fn findAttributeVal(key: []const u8, attrs: *XmlParser.XmlAttrIter) ?[]const u8 
     return null;
 }
 
+fn getColour(user_data: *Userdata, attrs: *XmlParser.XmlAttrIter) [4]f32 {
+    var colour: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
+
+    const colourAttr = findAttributeVal("v", attrs) orelse return colour;
+
+    if (colourAttr[0] == '#') {
+        const r_channel: f32 = @as(f32, @floatFromInt(std.fmt.parseInt(i32, colourAttr[1..3], 16) catch 255));
+        const g_channel: f32 = @as(f32, @floatFromInt(std.fmt.parseInt(i32, colourAttr[3..5], 16) catch 255));
+        const b_channel: f32 = @as(f32, @floatFromInt(std.fmt.parseInt(i32, colourAttr[5..7], 16) catch 255));
+        var alpha_channel: f32 = 255;
+        if (colourAttr.len == 9) {
+            alpha_channel = @as(f32, @floatFromInt(std.fmt.parseInt(i32, colourAttr[7..9], 16) catch 255));
+        }
+
+        colour = .{
+            r_channel / 255,
+            g_channel / 255,
+            b_channel / 255,
+            alpha_channel / 255,
+        };
+    }
+
+    if (std.mem.eql(u8, colourAttr, "red")) {
+        colour = .{ 1.0, 0.0, 0.0, 1.0 };
+    } else if (std.mem.eql(u8, colourAttr, "green")) {
+        colour = .{ 0.0, 1.0, 0.0, 1.0 };
+    } else if (std.mem.eql(u8, colourAttr, "blue")) {
+        colour = .{ 0.0, 0.0, 1.0, 1.0 };
+    }
+
+    user_data.log.print("Colour attr: {s} => ({d}, {d}, {d}, {d})\n", .{ colourAttr, colour[0] * 255, colour[1] * 255, colour[2] * 255, colour[3] * 255 }) catch |err| {
+        _ = user_data.log.print("Error printing: {}\n", .{err}) catch null;
+    };
+
+    return colour;
+}
+
 fn startElement(ctx: ?*anyopaque, name: []const u8, attrs: *XmlParser.XmlAttrIter) void {
     const user_data: *Userdata = @ptrCast(@alignCast(ctx));
 
@@ -66,12 +130,48 @@ fn startElement(ctx: ?*anyopaque, name: []const u8, attrs: *XmlParser.XmlAttrIte
         user_data.handleNode(attrs);
         return;
     } else if (std.mem.eql(u8, name, "way")) {
-        user_data.points_out.writeInt(u32, 0xffffffff, .little) catch unreachable;
+        user_data.handleWay(attrs);
+        return;
     } else if (std.mem.eql(u8, name, "nd")) {
+        user_data.num_refs += 1;
         const node_id_s = findAttributeVal("ref", attrs) orelse return;
+
         const node_id = std.fmt.parseInt(i64, node_id_s, 10) catch unreachable;
         const node_idx = user_data.node_id_idx_map.get(node_id) orelse return;
         user_data.points_out.writeInt(u32, @intCast(node_idx), .little) catch unreachable;
+    } else if (std.mem.eql(u8, name, "member")) {
+        const member_type = findAttributeVal("type", attrs) orelse return;
+        if (std.mem.eql(u8, member_type, "way")) {
+            const way_id_s = findAttributeVal("ref", attrs) orelse return;
+            const way_id = std.fmt.parseInt(i64, way_id_s, 10) catch unreachable;
+            //user_data.log.print("Found way {}\n", .{way_id}) catch {};
+            user_data.stored_ways.append(way_id) catch {};
+        }
+    } else if (std.mem.eql(u8, name, "tag")) {
+        const tagName = findAttributeVal("k", attrs) orelse return;
+        if (std.mem.eql(u8, tagName, "colour") or std.mem.eql(u8, tagName, "color")) {
+            const colour = getColour(user_data, attrs);
+            user_data.stored_colour = colour;
+        }
+    }
+}
+
+fn endElement(ctx: ?*anyopaque, name: []const u8) void {
+    const user_data: *Userdata = @ptrCast(@alignCast(ctx));
+
+    if (std.mem.eql(u8, name, "relation")) {
+        //user_data.log.print("Relation\n", .{}) catch {};
+        const white: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
+        if (!std.mem.eql(f32, &user_data.stored_colour, &white)) {
+            const stored_ways = user_data.stored_ways.toOwnedSlice() catch return;
+            for (stored_ways) |way_id| {
+                //user_data.log.print("Stored Way: {}, colour: {any}\n", .{ way_id, user_data.stored_colour }) catch {};
+
+                user_data.way_id_colour_map.put(way_id, user_data.stored_colour) catch unreachable;
+            }
+            user_data.stored_ways.allocator.free(stored_ways);
+        }
+        user_data.stored_colour = white;
     }
 }
 
@@ -195,18 +295,43 @@ pub fn main() !void {
     defer points_out_buf_writer.flush() catch unreachable;
     const points_out_writer = points_out_buf_writer.writer().any();
 
+    const log_f = try std.fs.cwd().createFile("make_site.log", .{});
+    var log_buf_writer = std.io.bufferedWriter(log_f.writer());
+    defer log_buf_writer.flush() catch unreachable;
+    const log_writer = log_buf_writer.writer().any();
+
     var userdata = Userdata{
         .points_out = points_out_writer,
+        .log = log_writer,
         .node_id_idx_map = std.AutoHashMap(i64, usize).init(alloc),
+        .way_id_colour_map = std.AutoHashMap(i64, [4]f32).init(alloc),
+        .stored_ways = std.ArrayList(i64).init(alloc),
     };
     defer userdata.deinit();
 
     try runParser(args.osm_data, .{
         .ctx = &userdata,
         .startElement = startElement,
+        .endElement = endElement,
     });
-
+    var it = userdata.way_id_colour_map.keyIterator();
+    while (it.next()) |way_key| {
+        const channels = userdata.way_id_colour_map.get(way_key.*) orelse {
+            const white: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 };
+            _ = try userdata.points_out.writeAll(std.mem.asBytes(&white));
+            continue;
+        };
+        userdata.log.print("Adding colour ({d}, {d}, {d}, {d}) to way {}\n", .{ channels[0] * 255, channels[1] * 255, channels[2] * 255, channels[3] * 255, way_key.* }) catch |err| {
+            try userdata.log.print("Error printing: {}\n", .{err});
+        };
+        for (channels) |channel| {
+            _ = try userdata.points_out.writeAll(std.mem.asBytes(&channel));
+        }
+    }
     const metadata_out_f = try std.fs.cwd().createFile(metadata_path, .{});
     userdata.metadata.end_nodes = userdata.num_nodes * 8;
+    userdata.metadata.end_refs = userdata.metadata.end_nodes + (userdata.num_refs * 4);
+    userdata.metadata.end_ways = userdata.metadata.end_refs + (userdata.num_ways * 4);
+
     try std.json.stringify(userdata.metadata, .{}, metadata_out_f.writer());
 }
