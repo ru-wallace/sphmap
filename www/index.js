@@ -46,9 +46,9 @@ class WasmHandler {
     const positionBuffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
-    let vertexPosition = gl.getUniformLocWasm(this.gl.program)
-    this.gl.vertexAttribPointer(vertexPosition, 2, this.gl.FLOAT, false, 0, 0);
-    positionArrayIndex = this.gl.getAttributeLocation(this.gl.program, "aVertexPosition");
+    //let vertexPosition = this.getUniformLocWasm(this.gl.program, "")
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
+    //positionArrayIndex = this.gl.getAttributeLocation(this.gl.program, "aVertexPosition");
 
     this.gl.enableVertexAttribArray(0);
   }
@@ -67,9 +67,10 @@ class WasmHandler {
     return this.ebos.length - 1;
   }
 
-  getUniformLocWasm(program, namep, name_len) {
-    const name_data = new Uint8Array(this.memory.buffer, namep, name_len);
-    const name = new TextDecoder("utf8").decode(name_data);
+  //getUniformLocWasm(program, namep, name_len) {
+  getUniformLocWasm(program, name) {
+    //const name_data = new Uint8Array(this.memory.buffer, namep, name_len);
+    //const name = new TextDecoder("utf8").decode(name_data);
 
     this.uniform_locs.push(
       this.gl.getUniformLocation(this.programs[program], name),

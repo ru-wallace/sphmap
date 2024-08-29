@@ -146,7 +146,7 @@ const Renderer = struct {
         const index_data: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, map_data[@intCast(metadata.end_nodes)..@intCast(metadata.end_refs)]));
         const ebo = js.bindEbo(index_data.ptr, index_data.len);
 
-        const colour_data: []const f32 = @alignCast(std.mem.bytesAsSlice(f32, map_data[@intCast(metadata.end_refs)..]));
+        //const colour_data: []const f32 = @alignCast(std.mem.bytesAsSlice(f32, map_data[@intCast(metadata.end_refs)..]));
 
         return .{
             .program = program,
