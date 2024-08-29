@@ -1,3 +1,4 @@
+WebGL2RenderingContext.FLOAT
 class WasmHandler {
   constructor(gl) {
     this.gl = gl;
@@ -47,8 +48,11 @@ class WasmHandler {
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
     let vertexPosition = gl.getUniformLocWasm(this.gl.program)
     this.gl.vertexAttribPointer(vertexPosition, 2, this.gl.FLOAT, false, 0, 0);
+    positionArrayIndex = this.gl.getAttributeLocation(this.gl.program, "aVertexPosition");
+
     this.gl.enableVertexAttribArray(0);
   }
+  
 
   bindEbo(ptr, len) {
     const indices = new Uint32Array(this.memory.buffer, ptr, len);
@@ -66,6 +70,7 @@ class WasmHandler {
   getUniformLocWasm(program, namep, name_len) {
     const name_data = new Uint8Array(this.memory.buffer, namep, name_len);
     const name = new TextDecoder("utf8").decode(name_data);
+
     this.uniform_locs.push(
       this.gl.getUniformLocation(this.programs[program], name),
     );
@@ -76,15 +81,6 @@ class WasmHandler {
     this.gl.bindVertexArray(this.vaos[vao]);
   }
 
-  glCreateColourBuffer(ptr, len) {
-    const colours = new Float32Array(this.memory.buffer, ptr, len);
-    const colourBuffer = this.gl.createBuffer()
-    this.gl.bindBuffer(gl.ARRAY_BUFFER, colourBuffer);
-    this.gl.bufferData(gl.ARRAY_BUFFER, colours, gl.STATIC_DRAW);
-    
-
-    
-  }
 
   glUseProgram(program) {
     this.gl.useProgram(this.programs[program]);

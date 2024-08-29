@@ -2,10 +2,14 @@
 precision highp float;
 
 in vec4 aVertexPosition;
+in vec4 aVertexColor;
 uniform float lat_center;
 uniform float lon_center;
 uniform float zoom;
 uniform float aspect;
+
+out vec4 vVertexColor;
+
 
 void main() {
   gl_Position = aVertexPosition;
@@ -15,4 +19,6 @@ void main() {
   gl_Position.x -= lon_center; //123.50649;
   gl_Position.x *= zoom;
   gl_PointSize = 0.5;
+
+  vVertexColor = aVertexColor;
 }

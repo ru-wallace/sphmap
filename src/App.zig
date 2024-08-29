@@ -115,8 +115,8 @@ const Gl = struct {
     const UNSIGNED_INT = 0x1405;
 };
 
-const vs_source = @embedFile("vertex.glsl");
-const fs_source = @embedFile("fragment.glsl");
+const vs_source = @embedFile("vertex.vert");
+const fs_source = @embedFile("fragment.frag");
 
 const Renderer = struct {
     program: i32,
@@ -143,8 +143,10 @@ const Renderer = struct {
 
         const aspect = FloatUniform.init(program, "aspect", aspect_val);
 
-        const index_data: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, map_data[@intCast(metadata.end_nodes)..]));
+        const index_data: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, map_data[@intCast(metadata.end_nodes)..@intCast(metadata.end_refs)]));
         const ebo = js.bindEbo(index_data.ptr, index_data.len);
+
+        const colour_data: []const f32 = @alignCast(std.mem.bytesAsSlice(f32, map_data[@intCast(metadata.end_refs)..]));
 
         return .{
             .program = program,
