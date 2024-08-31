@@ -47,19 +47,28 @@ class WasmHandler {
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
     this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
     this.gl.enableVertexAttribArray(0);
+    //this.gl.vertexAttribPointer(1, 4, this.gl.FLOAT, false, 24, 8);
+    //this.gl.enableVertexAttribArray(1);
   }
 
   bindEbo(ptr, len) {
+    console.log("bindEbo ptr: " + ptr + " len: " + len);
     const indices = new Uint32Array(this.memory.buffer, ptr, len);
+    console.log(indices.slice(0, 30));
+    console.log(indices.length)
     const ebo = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, ebo);
     this.gl.bufferData(
       this.gl.ELEMENT_ARRAY_BUFFER,
       indices,
-      this.gl.STATIC_DRAW,
+      this.gl.DYNAMIC_DRAW,
     );
     this.ebos.push(ebo);
-    return this.ebos.length - 1;
+    //return this.ebos.length - 1;
+  }
+
+  unbindEbo() {
+    this.ebos.pop();
   }
 
   getUniformLocWasm(program, namep, name_len) {
@@ -82,11 +91,21 @@ class WasmHandler {
   glUniform1f(loc, val) {
     this.gl.uniform1f(this.uniform_locs[loc], val);
   }
+  glUniform4f(loc, val1, val2, val3, val4) {
+    console.log("Uniform4f: " + val1 + " " + val2 + " " + val3 + " " + val4);
+    this.gl.uniform4f(this.uniform_locs[loc], val1, val2, val3, val4);
+  }
+
+  glUniform1i(loc, val) {
+    this.gl.uniform1i(this.uniform_locs[loc], val);
+  }
 
   logWasm(s, len) {
     const buf = new Uint8Array(this.memory.buffer, s, len);
     console.log(new TextDecoder("utf8").decode(buf));
   }
+
+
 }
 
 function initCanvas() {
@@ -119,6 +138,7 @@ async function instantiateWasmModule(wasm_handlers) {
       compileLinkProgram: wasm_handlers.compileLinkProgram.bind(wasm_handlers),
       bind2DFloat32Data: wasm_handlers.bind2DFloat32Data.bind(wasm_handlers),
       bindEbo: wasm_handlers.bindEbo.bind(wasm_handlers),
+      unbindEbo: wasm_handlers.unbindEbo.bind(wasm_handlers),
       glBindVertexArray: wasm_handlers.glBindVertexArray.bind(wasm_handlers),
       glClearColor: (...args) => wasm_handlers.gl.clearColor(...args),
       glClear: (...args) => wasm_handlers.gl.clear(...args),
@@ -127,6 +147,8 @@ async function instantiateWasmModule(wasm_handlers) {
       glDrawElements: (...args) => wasm_handlers.gl.drawElements(...args),
       glGetUniformLoc: wasm_handlers.getUniformLocWasm.bind(wasm_handlers),
       glUniform1f: wasm_handlers.glUniform1f.bind(wasm_handlers),
+      glUniform4f: wasm_handlers.glUniform4f.bind(wasm_handlers),
+      glUniform1i: wasm_handlers.glUniform1i.bind(wasm_handlers),
     },
   };
 
@@ -140,6 +162,7 @@ async function instantiateWasmModule(wasm_handlers) {
 }
 
 async function loadPointsData(mod) {
+  console.log("Loading points data");
   const map_data_response = await fetch("map_data.bin");
   const data_reader = map_data_response.body.getReader({
     mode: "byob",
@@ -148,7 +171,7 @@ async function loadPointsData(mod) {
   while (true) {
     const { value, done } = await data_reader.read(new Uint8Array(array_buf));
     if (done) break;
-
+    console.log("Global_chunk value" + mod.instance.exports.global_chunk.value);
     array_buf = value.buffer;
     const chunk_buf = new Uint8Array(
       mod.instance.exports.memory.buffer,
@@ -156,14 +179,41 @@ async function loadPointsData(mod) {
       16384,
     );
     chunk_buf.set(value);
+    console.log("value length: " + value.length);
+    mod.instance.exports.pushMapData(value.length);
+    
+  }
+}
+
+async function loadElementData(mod) {
+   console.log("Loading element data");
+  const map_data_response = await fetch("element_data.bin");
+  const data_reader = map_data_response.body.getReader({
+    mode: "byob",
+  });
+  let array_buf = new ArrayBuffer(16384);
+  while (true) {
+    const { value, done } = await data_reader.read(new Uint8Array(array_buf));
+    if (done) break;
+    console.log("Global_chunk value" + mod.instance.exports.global_chunk.value);
+    array_buf = value.buffer;
+    const chunk_buf = new Uint8Array(
+      mod.instance.exports.memory.buffer,
+      mod.instance.exports.global_chunk.value,
+      16384,
+    );
+
+    console.log("Element data: " + value.slice(0, 30).toString(16));
+    chunk_buf.set(value);
     mod.instance.exports.pushMapData(value.length);
   }
 }
 
 async function loadMetadata(mod) {
+  console.log("Loading metadata");
   const map_data_response = await fetch("map_data.json");
   const data = await map_data_response.arrayBuffer();
-
+  console.log("Global_chunk value" + mod.instance.exports.global_chunk.value);
   const chunk_buf = new Uint8Array(
     mod.instance.exports.memory.buffer,
     mod.instance.exports.global_chunk.value,
@@ -171,7 +221,7 @@ async function loadMetadata(mod) {
   );
 
   chunk_buf.set(new Uint8Array(data));
-
+  console.log("value length: " + data.byteLength);
   mod.instance.exports.setMetadata(data.byteLength);
 }
 
@@ -246,6 +296,7 @@ async function init() {
   const wasm_handlers = new WasmHandler(makeGl(canvas));
   const mod = await instantiateWasmModule(wasm_handlers);
   await loadPointsData(mod);
+  await loadElementData(mod);
   await loadMetadata(mod);
 
   mod.instance.exports.init(canvasAspect(canvas));

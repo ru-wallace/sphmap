@@ -1,2 +1,8 @@
 /zig-out
 /.zig-cache
+*/map.osm
+*/map1.osm
+*/*.old
+*.bin
+*.wasm
+*.log
