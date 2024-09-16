@@ -14,22 +14,16 @@ const WayList = std.MultiArrayList(Way);
 const BuildingList = std.MultiArrayList(Building);
 
 fn WayListDeinit(waylist: *WayList, alloc: *std.mem.Allocator) void {
-    std.debug.print("Deinit waylist\n", .{});
-    std.debug.print("waylist items: {d}\n", .{waylist.len});
     var waylist_deref = waylist.*;
     while (waylist_deref.popOrNull()) |item| {
-        std.debug.print("Deinit waylist item nodes: {any}\n", .{item.nodes});
         alloc.free(item.nodes);
     }
     waylist_deref.deinit(alloc.*);
 }
 
 fn BuildingListDeinit(waylist: *BuildingList, alloc: *std.mem.Allocator) void {
-    std.debug.print("Deinit building list\n", .{});
-    std.debug.print("building list items: {d}\n", .{waylist.len});
     var waylist_deref = waylist.*;
     while (waylist_deref.popOrNull()) |item| {
-        std.debug.print("Deinit buildinglist item nodes: {any}\n", .{item.nodes});
         alloc.free(item.nodes);
         alloc.destroy(&item.height);
     }
@@ -216,7 +210,7 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                     }
                     position += 1;
                 }
-                std.debug.print("Node: id={d}, lat={d}, lon={d}\n", .{ id, lat, lon });
+                //std.debug.print("Node: id={d}, lat={d}, lon={d}\n", .{ id, lat, lon });
                 if (lat < ctx.min_lat) {
                     ctx.min_lat = lat;
                 }
@@ -354,14 +348,6 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                     }
                 }
 
-                std.debug.print("Way: id={d}, nodes={d} type={s}", .{ id, nodes.items.len, @tagName(way_type) });
-                if (way_type == way_types.None) {
-                    std.debug.print(" (unknown)", .{});
-                }
-                if (way_type == way_types.Building) {
-                    std.debug.print(" height={d}", .{building_height});
-                }
-                std.debug.print("\n", .{});
                 const node_array = nodes.toOwnedSlice() catch unreachable;
                 addWay(ctx, way_type);
                 switch (way_type) {
@@ -501,6 +487,7 @@ pub fn main() !void {
     }
 
     std.debug.print("Way 1: {any}\n", .{way_collection.foot.get(way_collection.foot.len - 1).nodes});
+    std.debug.print("Last other: {any}\n", .{way_collection.other.get(0).nodes});
 
     writeWays(&data_writer, &way_collection.foot, &alloc);
     writeWays(&data_writer, &way_collection.bicycle, &alloc);
