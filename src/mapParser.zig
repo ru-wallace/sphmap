@@ -189,8 +189,8 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                             end += 1;
                         }
                         id = std.fmt.parseInt(usize, chunk[start..end], 10) catch unreachable;
-                    } else if (chunk[position] == 'l' and chunk[position + 1] == 'a' and chunk[position + 2] == 't') {
-                        position += 5;
+                    } else if (chunk[position] == ' ' and chunk[position + 1] == 'l' and chunk[position + 2] == 'a' and chunk[position + 3] == 't' and chunk[position + 4] == '=') {
+                        position += 6;
                         const start = position;
                         var end = position;
                         while (chunk[end] != '"') {
@@ -198,14 +198,17 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                         }
 
                         lat = std.fmt.parseFloat(f32, chunk[start..end]) catch unreachable;
-                    } else if (chunk[position] == 'l' and chunk[position + 1] == 'o' and chunk[position + 2] == 'n') {
-                        position += 5;
+                    } else if (chunk[position] == ' ' and chunk[position + 1] == 'l' and chunk[position + 2] == 'o' and chunk[position + 3] == 'n' and chunk[position + 4] == '=') {
+                        position += 6;
                         const start = position;
-                        var end = position;
-                        while (chunk[end] != '"') {
-                            end += 1;
+                        while (chunk[position] != '"') {
+                            position += 1;
                         }
-                        lon = std.fmt.parseFloat(f32, chunk[start..end]) catch unreachable;
+                        const end = position;
+                        lon = std.fmt.parseFloat(f32, chunk[start..end]) catch {
+                            std.debug.print("Error parsing lon: '{s}'\n", .{chunk[start - 30 .. end + 30]});
+                            unreachable;
+                        };
                     } else if (chunk[position] == '>') {
                         break;
                     }
@@ -375,7 +378,7 @@ pub fn parseOSM(ctx: *metadata_t, data_path: []const u8, node_list: *std.AutoArr
 
     std.debug.print("Parsing map\n", .{});
     const mb = 1024 * 1024;
-    const file_content = f.readToEndAlloc(alloc.*, 4 * mb) catch unreachable;
+    const file_content = f.readToEndAlloc(alloc.*, 30 * mb) catch unreachable;
     defer alloc.free(file_content);
 
     try parseChunk(ctx, file_content, node_list, node_refs, way_list, alloc);

@@ -48,11 +48,14 @@ class WasmHandler {
     const positionBuffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
-    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, true, 0, 0);
     this.gl.enableVertexAttribArray(0);
     //this.gl.vertexAttribPointer(1, 4, this.gl.FLOAT, false, 24, 8);
     //this.gl.enableVertexAttribArray(1);
   }
+
+
+
 
   bindEbo(ptr, len) {
     console.log("bindEbo ptr: " + ptr + " len: " + len);
@@ -101,6 +104,16 @@ class WasmHandler {
 
   glUniform1i(loc, val) {
     this.gl.uniform1i(this.uniform_locs[loc], val);
+  }
+
+  
+
+  glUniformMatrix4fv(loc, transpose, ptr) {
+    
+    const data = new Float32Array(this.memory.buffer, ptr, 16);
+    console.log("UniformMatrix4fv: Addr:" + ptr);
+    console.log(data);
+    this.gl.uniformMatrix4fv(this.uniform_locs[loc], transpose, data);
   }
 
   logWasm(s, len) {
@@ -152,6 +165,7 @@ async function instantiateWasmModule(wasm_handlers) {
       glUniform1f: wasm_handlers.glUniform1f.bind(wasm_handlers),
       glUniform4f: wasm_handlers.glUniform4f.bind(wasm_handlers),
       glUniform1i: wasm_handlers.glUniform1i.bind(wasm_handlers),
+      glUniformMatrix4fv: wasm_handlers.glUniformMatrix4fv.bind(wasm_handlers),
     },
   };
 
@@ -163,6 +177,8 @@ async function instantiateWasmModule(wasm_handlers) {
 
   return mod;
 }
+
+
 
 async function loadPointsData(mod) {
   console.log("Loading points data");
@@ -307,7 +323,66 @@ async function init() {
 
   const canvas_callbacks = new CanvasInputHandler(canvas, mod);
   canvas_callbacks.setCanvasCallbacks();
-  mod.instance.exports.render();
+
+
+  const zoomSlider = document.getElementById("zoom");
+  const zoomValue = document.getElementById("zoomVal");
+
+
+  const tXSlider = document.getElementById("tX");
+  const tXValue = document.getElementById("tXVal");
+
+  const tYSlider = document.getElementById("tY");
+  const tYValue = document.getElementById("tYVal");
+
+  const tZSlider = document.getElementById("tZ");
+  const tZValue = document.getElementById("tZVal");
+
+  const rXSlider = document.getElementById("rX");
+  const rXValue = document.getElementById("rXVal");
+
+  const rYSlider = document.getElementById("rY");
+  const rYValue = document.getElementById("rYVal");
+
+  const rZSlider = document.getElementById("rZ");
+  const rZValue = document.getElementById("rZVal");
+
+
+  async function updateMats() {
+    const zoom = zoomSlider.value;
+    const tX = tXSlider.value;
+    const tY = tYSlider.value;
+    const tZ = tZSlider.value;
+
+    const rX = rXSlider.value;
+    const rY = rYSlider.value;
+    const rZ = rZSlider.value;
+
+    zoomValue.innerHTML = zoom;
+    tXValue.innerHTML = tX;
+    tYValue.innerHTML = tY;
+    tZValue.innerHTML = tZ;
+
+    rXValue.innerHTML = rX;
+    rYValue.innerHTML = rY;
+    rZValue.innerHTML = rZ;
+    //scale: f32, x: f32, y: f32, z: f32, a: f32
+    mod.instance.exports.setTransformation(zoom, tX, tY, tZ, rX, rY, rZ);
+    mod.instance.exports.render();
+  }
+
+  zoomSlider.oninput = updateMats;
+  tXSlider.oninput = updateMats;
+  tYSlider.oninput = updateMats;
+  tZSlider.oninput = updateMats;
+  rXSlider.oninput = updateMats;
+  rYSlider.oninput = updateMats;
+  rZSlider.oninput = updateMats;
+
+  updateMats();
+
+
+
 }
 
 window.onload = init;

@@ -61,6 +61,14 @@ pub export fn init(aspect: f32) void {
     global.app = App.init(aspect, global.map_data.items, global.metadata);
 }
 
+pub export fn setProjection(near: f32, far: f32, fovy: f32) void {
+    global.app.renderer.setProjection(near, far, fovy);
+}
+
+pub export fn setTransformation(scale: f32, x: f32, y: f32, z: f32, rX: f32, rY: f32, rZ: f32) void {
+    global.app.renderer.setTransformation(scale, x, y, z, rX, rY, rZ);
+}
+
 pub export fn render() void {
     global.app.renderer.render();
 }

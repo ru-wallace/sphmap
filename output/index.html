@@ -16,14 +16,64 @@
         height: 100%;
         overflow: hidden;
       }
+      #container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: row;
+      }
+
+      #controls {
+        width: 35%;
+        height: 100%;
+        background-color: #f0f0f0;
+        padding: 10px;
+      }
+
+      input[type=range] {
+        width: 85%;
+      }
 
       canvas {
-        width: 100%;
+        width: 65%;
         height: 100%;
       }
     </style>
   </head>
   <body>
-    <canvas id="canvas"></canvas>
+    <div id="container">
+      <canvas id="canvas"></canvas>
+      <div id="controls">
+        <p>Zoom</p>
+        <input type="range" id="zoom" name="zoom" min="0.5" max="5" value="0.786" step="0.001">
+        <span id="zoomVal">0.001</span>
+
+        <h2>Translation</h2>
+        <span>X</span>
+        <input type="range" name="tX" id="tX" min="-40" max="40" value="-25.54" step="0.0001">
+        <span id="tXVal">0.001</span>
+        <br>
+        <span>Y</span>
+        <input type="range" name="tY" id="tY" min="-70" max="70" value="61.25" step="0.001">
+        <span id="tYVal">0.001</span>
+        <br>
+        <span>Z</span>
+        <input type="range" name="tZ" id="tZ" min="-50" max="50" value="-0.13" step="0.001">
+        <span id="tZVal">0.001</span>
+
+        <h2>Rotation</h2>
+        <span>X</span>
+        <input type="range" name="rX" id="rX" min="-180" max="180" value="0.0" step="0.001">
+        <span id="rXVal">0.001</span>
+        <br>
+        <span>Y</span>
+        <input type="range" name="rY" id="rY" min="-180" max="180" value="0.0" step="0.001">
+        <span id="rYVal">0.001</span>
+        <br>
+        <span>Z</span>
+        <input type="range" name="rZ" id="rZ" min="-180" max="180" value="0.0" step="0.001">
+        <span id="rZVal">0.001</span>
+
+    </div>
   </body>
 </html>

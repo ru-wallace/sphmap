@@ -126,6 +126,26 @@ const IUniform = struct {
     }
 };
 
+const Mat4Uniform = struct {
+    loc: i32,
+    val: [16]f32 = undefined,
+
+    fn init(program: i32, key: []const u8, val: [16]f32) Mat4Uniform {
+        const loc = js.glGetUniformLoc(program, key.ptr, key.len);
+        return .{
+            .loc = loc,
+            .val = val,
+        };
+    }
+
+    fn set(self: *Mat4Uniform) void {
+        const matSlice = self.val[0..16];
+        print("Setting matrix: {any} Ptr {any}", .{ matSlice, matSlice.ptr });
+
+        js.glUniformMatrix4fv(self.loc, false, matSlice.ptr);
+    }
+};
+
 fn setUniforms(uniforms: []const FloatUniform) void {
     for (uniforms) |uniform| {
         js.glUniform1f(uniform.loc, uniform.val);
@@ -147,6 +167,7 @@ const js = struct {
     extern fn glUniform1f(loc: i32, val: f32) void;
     extern fn glUniform4f(loc: i32, val1: f32, val2: f32, val3: f32, val4: f32) void;
     extern fn glUniform1i(loc: i32, val: u32) void;
+    extern fn glUniformMatrix4fv(loc: i32, transpose: bool, ptr: [*]const f32) void;
     extern fn zigPrint(s: [*]const u8, len: usize) void;
 };
 
@@ -257,7 +278,7 @@ const element_types = struct {
                 nBuilding += 1;
             }
 
-            print("Foot: {} Bicycle: {} Car: {} Rail: {} Other: {} Building: {}", .{ nFoot, nBicycle, nCar, nRail, nOther, nBuilding });
+            //print("Foot: {} Bicycle: {} Car: {} Rail: {} Other: {} Building: {}", .{ nFoot, nBicycle, nCar, nRail, nOther, nBuilding });
         }
         const foot_arr: []u32 = std.heap.wasm_allocator.alloc(u32, foot.items.len) catch unreachable;
         const bicycle_arr: []u32 = std.heap.wasm_allocator.alloc(u32, bicycle.items.len) catch unreachable;
@@ -294,6 +315,8 @@ const Renderer = struct {
     zoom: FloatUniform,
     colour: VecUniform,
     height: FloatUniform,
+    projection: Mat4Uniform,
+    transformation: Mat4Uniform,
     num_line_segments: usize,
     foot: []u32,
     bicycle: []u32,
@@ -327,6 +350,30 @@ const Renderer = struct {
 
         const height = FloatUniform.init(program, "height", 0.0);
 
+        const f: f32 = 100;
+        const n: f32 = 0.1;
+        const t: f32 = n * std.math.tan(std.math.pi / 8.0);
+        const b: f32 = -t;
+        const r: f32 = t * aspect_val;
+        const l: f32 = -r;
+
+        const projection = Mat4Uniform.init(program, "projection", .{ 2 * n / (r - l), 0, 0, 0, 0, 2 * n / (t - b), 0, 0, (r + l) / (r - l), (t + b) / (t - b), -(f + n) / (f - n), -1, 0, 0, -2 * f * n / (f - n), 0 });
+
+        const a: f32 = t * std.math.pi / 4000.0;
+        const c: f32 = std.math.cos(a);
+        const s: f32 = std.math.sin(a);
+        const x: f32 = 0.1; //scale
+        const tz: f32 = -10; //move in z
+        //const ty: f32 = -4; //move in y
+        //const tx: f32 = 55; //move in x
+
+        const transformation = Mat4Uniform.init(program, "transformation", .{
+            c * x,          s * s * x,      -c * s * x, 0,
+            0,              c * x,          s * x,      0,
+            s * x,          -c * s * x,     c * c * x,  0,
+            lon_center.val, lat_center.val, tz,         1,
+        });
+
         const index_data: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, map_data[@intCast(metadata.n_nodes * 8)..]));
         print("Index start: {x}", .{index_data[0..40]});
         const element_data = element_types.processData(index_data, &metadata);
@@ -341,6 +388,8 @@ const Renderer = struct {
             .zoom = zoom,
             .colour = colour,
             .height = height,
+            .projection = projection,
+            .transformation = transformation,
             .num_line_segments = index_data.len,
             .foot = element_data.foot,
             .bicycle = element_data.bicycle,
@@ -370,6 +419,43 @@ const Renderer = struct {
         js.glDrawElements(Gl.LINE_STRIP, @intCast(index_data.len), Gl.UNSIGNED_INT, 0);
     }
 
+    pub fn makeProjection(near: f32, far: f32, aspect: f32, fovy: f32) [16]f32 {
+        const f: f32 = 1.0 / std.math.tan(fovy / 2.0);
+        const nf: f32 = 1.0 / (near - far);
+        return .{
+            f / aspect, 0, 0,                   0,
+            0,          f, 0,                   0,
+            0,          0, (far + near) * nf,   -1,
+            0,          0, 2 * far * near * nf, 0,
+        };
+    }
+
+    pub fn makeTransformation(x: f32, y: f32, z: f32, rX: f32, rY: f32, rZ: f32, scale: f32) [16]f32 {
+        const rXr = rX * std.math.pi / 180.0;
+        const rYr = rY * std.math.pi / 180.0;
+        const rZr = rZ * std.math.pi / 180.0;
+        const cX: f32 = std.math.cos(rXr);
+        const sX: f32 = std.math.sin(rXr);
+        const cY: f32 = std.math.cos(rYr);
+        const sY: f32 = std.math.sin(rYr);
+        const cZ: f32 = std.math.cos(rZr);
+        const sZ: f32 = std.math.sin(rZr);
+        return .{
+            cY * cZ * scale,        cY * sZ * scale,        -sY * scale, 0,
+            sX * sY * cZ - cX * sZ, sX * sY * sZ + cX * cZ, sX * cY,     0,
+            cX * sY * cZ + sX * sZ, cX * sY * sZ - sX * cZ, cX * cY,     0,
+            x,                      y,                      z,           1,
+        };
+    }
+    pub fn setProjection(self: *Renderer, near: f32, far: f32, fovy: f32) void {
+        self.projection.val = Renderer.makeProjection(near, far, self.aspect.val, std.math.pi / fovy);
+        self.projection.set();
+    }
+
+    pub fn setTransformation(self: *Renderer, scale: f32, x: f32, y: f32, z: f32, rX: f32, rY: f32, rZ: f32) void {
+        self.transformation.val = Renderer.makeTransformation(x, y, z, rX, rY, rZ, scale);
+        self.transformation.set();
+    }
     pub fn render(self: *Renderer) void {
         js.glBindVertexArray(self.vao);
         js.glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -379,13 +465,15 @@ const Renderer = struct {
         //var isRoof = IUniform.init(self.program, "isBuildingRoof", 0);
         //isRoof.set();
         setUniforms(&.{ self.lat_center, self.lon_center, self.zoom, self.aspect });
+        self.projection.set();
+        self.transformation.set();
         self.height.val = 0.0;
         self.height.set();
 
         print("Rendering other: len: {}", .{self.other.len});
         self.renderLayer(self.other, .{ 1.0, 1.0, 1.0, 1.0 }, true);
         print("Rendering rail: len: {}", .{self.rail.len});
-        self.renderLayer(self.rail, .{ 0.0, 0.0, 1.0, 1.0 }, true);
+        self.renderLayer(self.rail, .{ 0.0, 0.85, 1.0, 1.0 }, true);
         print("Rendering foot: len: {}", .{self.foot.len});
         self.renderLayer(self.foot, .{ 0.0, 1.0, 0.0, 1.0 }, true);
         print("Rendering car: len: {}", .{self.car.len});
