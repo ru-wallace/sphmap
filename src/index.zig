@@ -21,6 +21,7 @@ pub export fn setMetadata(len: usize) void {
     const alloc = std.heap.wasm_allocator;
     const parsed = std.json.parseFromSlice(Metadata, alloc, global_chunk[0..len], .{}) catch unreachable;
     global.metadata = parsed.value;
+    print("Metadata: {any}\n", .{global.metadata});
 }
 
 const GlobalState = struct {

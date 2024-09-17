@@ -14,7 +14,7 @@ uniform float height;
 void main() {
   
   gl_Position = aVertexPosition;
-  gl_Position.y += height;
+  //gl_Position.y += height;
   gl_Position.y -= lat_center; //49.10902;
   gl_Position.y *= aspect * zoom;
   

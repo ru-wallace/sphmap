@@ -64,6 +64,7 @@ const foot = type_ref{
 
 const rail = type_ref{
     .key = "railway",
+    .values = &[_][]const u8{},
     .type = way_types.Rail,
 };
 
@@ -321,10 +322,10 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                                     val_match = true;
                                 }
                                 if (wtype.not_values.len > 0) {
+                                    not_val_match = true;
                                     for (wtype.not_values) |value| {
                                         _ = std.mem.indexOf(u8, val_list.items[idx], value) orelse {
-                                            not_val_match = true;
-                                            break;
+                                            continue;
                                         };
                                         not_val_match = false;
                                     }
@@ -482,8 +483,8 @@ pub fn main() !void {
     const nodes = node_list.values();
 
     for (nodes) |node| {
-        data_writer.writeAll(std.mem.asBytes(&node[0])) catch unreachable;
         data_writer.writeAll(std.mem.asBytes(&node[1])) catch unreachable;
+        data_writer.writeAll(std.mem.asBytes(&node[0])) catch unreachable;
     }
 
     std.debug.print("Way 1: {any}\n", .{way_collection.foot.get(way_collection.foot.len - 1).nodes});
@@ -492,9 +493,9 @@ pub fn main() !void {
     writeWays(&data_writer, &way_collection.foot, &alloc);
     writeWays(&data_writer, &way_collection.bicycle, &alloc);
     writeWays(&data_writer, &way_collection.car, &alloc);
-    writeBuildings(&data_writer, &way_collection.building, &alloc);
     writeWays(&data_writer, &way_collection.rail, &alloc);
     writeWays(&data_writer, &way_collection.other, &alloc);
+    writeBuildings(&data_writer, &way_collection.building, &alloc);
 
     std.json.stringify(
         metadata,

@@ -19,12 +19,12 @@ const Builder = struct {
 
     fn generateMapData(self: *Builder) void {
         const exe = self.b.addExecutable(.{
-            .name = "make_site",
-            .root_source_file = self.b.path("src/make_site.zig"),
+            .name = "mapParser",
+            .root_source_file = self.b.path("src/mapParser.zig"),
             .target = self.target,
             .optimize = self.opt,
         });
-        exe.linkSystemLibrary("expat");
+        //exe.linkSystemLibrary("expat");
         exe.linkLibC();
         self.b.installArtifact(exe);
     }
