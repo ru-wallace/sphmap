@@ -7,3 +7,4 @@
 *.wasm
 *.log
 *.bat
+build.bat

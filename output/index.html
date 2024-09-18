@@ -44,26 +44,23 @@
     <div id="container">
       <canvas id="canvas"></canvas>
       <div id="controls">
-        <p>Zoom</p>
-        <input type="range" id="zoom" name="zoom" min="0.5" max="5" value="0.786" step="0.001">
-        <span id="zoomVal">0.001</span>
 
         <h2>Translation</h2>
         <span>X</span>
-        <input type="range" name="tX" id="tX" min="-40" max="40" value="-25.54" step="0.0001">
+        <input type="range" name="tX" id="tX" min="-5" max="5" value="0" step="0.0001">
         <span id="tXVal">0.001</span>
         <br>
         <span>Y</span>
-        <input type="range" name="tY" id="tY" min="-70" max="70" value="61.25" step="0.001">
+        <input type="range" name="tY" id="tY" min="-5" max="5" value="0" step="0.0001">
         <span id="tYVal">0.001</span>
         <br>
         <span>Z</span>
-        <input type="range" name="tZ" id="tZ" min="-50" max="50" value="-0.13" step="0.001">
+        <input type="range" name="tZ" id="tZ" min="-1.5" max="-0.5" value="-0.88" step="0.001">
         <span id="tZVal">0.001</span>
 
         <h2>Rotation</h2>
         <span>X</span>
-        <input type="range" name="rX" id="rX" min="-180" max="180" value="0.0" step="0.001">
+        <input type="range" name="rX" id="rX" min="-180" max="180" value="45.0" step="0.001">
         <span id="rXVal">0.001</span>
         <br>
         <span>Y</span>
@@ -73,6 +70,28 @@
         <span>Z</span>
         <input type="range" name="rZ" id="rZ" min="-180" max="180" value="0.0" step="0.001">
         <span id="rZVal">0.001</span>
+
+        <h2>Projection</h2>
+        <span>FOV</span>
+        <input type="range" name="fov" id="fov" min="0" max="180" value="45" step="0.001">
+        <span id="fovVal">0.001</span>
+        <br>
+        <span>Near</span>
+        <input type="range" name="near" id="near" min="0.0001" max="0.1" value="0.0119" step="0.00001">
+        <span id="nearVal">0.001</span>
+
+        <br>
+        <span>Far</span>
+        <input type="range" name="far" id="far" min="0.001" max="5" value="0.1813" step="0.0001">
+        <span id="farVal">100.0</span>
+        <br>
+        <span>Near/far ratio:</span> <span id="nearFarRatio"></span>
+
+        <h2>Roof</h2>
+        <span>Roof z coord</span>
+        <input type="range" name="roof" id="roof" min="0" max="0.0015" value="0.001" step="0.00001">
+        <span id="roofVal">0.01</span>
+
 
     </div>
   </body>

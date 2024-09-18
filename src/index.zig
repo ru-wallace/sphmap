@@ -61,12 +61,40 @@ pub export fn init(aspect: f32) void {
     global.app = App.init(aspect, global.map_data.items, global.metadata);
 }
 
-pub export fn setProjection(near: f32, far: f32, fovy: f32) void {
-    global.app.renderer.setProjection(near, far, fovy);
+pub export fn setNearFar(near: f32, far: f32) void {
+    global.app.renderer.near = near;
+    global.app.renderer.far = far;
 }
 
-pub export fn setTransformation(scale: f32, x: f32, y: f32, z: f32, rX: f32, rY: f32, rZ: f32) void {
-    global.app.renderer.setTransformation(scale, x, y, z, rX, rY, rZ);
+pub export fn setViewAngle(fovy: f32) void {
+    global.app.renderer.viewAngle = fovy;
+}
+// pub export fn setProjection(near: f32, far: f32, fovy: f32) void {
+//     global.app.renderer.setProjection(near, far, fovy);
+// }
+
+// pub export fn setTransformation(scale: f32, x: f32, y: f32, z: f32, rX: f32, rY: f32, rZ: f32) void {
+//     global.app.renderer.setTransformation(scale, x, y, z, rX, rY, rZ);
+// }
+
+pub export fn setZoom(zoomVal: f32) void {
+    global.app.renderer.zoom.val = zoomVal;
+}
+
+pub export fn setTranslation(x: f32, y: f32, z: f32) void {
+    global.app.renderer.tX = x;
+    global.app.renderer.tY = y;
+    global.app.renderer.zPos = z;
+}
+
+pub export fn setRotation(x: f32, y: f32, z: f32) void {
+    global.app.renderer.rX = x;
+    global.app.renderer.rY = y;
+    global.app.renderer.rZ = z;
+}
+
+pub export fn setRoofHeight(height: f32) void {
+    global.app.renderer.roofHeight = height;
 }
 
 pub export fn render() void {

@@ -156,7 +156,7 @@ fn addWay(ctx: *metadata_t, wayType: way_types) void {
 
 const modes = enum { Node, Way, Relation, None };
 
-pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArrayHashMap(usize, [2]f32), node_refs: *std.AutoArrayHashMap(usize, usize), way_collection: *WayCollection, alloc: *std.mem.Allocator) !void {
+pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArrayHashMap(usize, [3]f32), node_refs: *std.AutoArrayHashMap(usize, usize), way_collection: *WayCollection, alloc: *std.mem.Allocator) !void {
     var position: u32 = 0;
     var mode = modes.None;
 
@@ -228,7 +228,7 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                     ctx.max_lon = lon;
                 }
                 ctx.n_nodes += 1;
-                node_list.put(id, .{ lat, lon }) catch unreachable;
+                node_list.put(id, .{ lat, lon, 0.0 }) catch unreachable;
                 node_refs.put(id, node_list.count() - 1) catch unreachable;
                 mode = modes.None;
             },
@@ -351,7 +351,6 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                         }
                     }
                 }
-
                 const node_array = nodes.toOwnedSlice() catch unreachable;
                 addWay(ctx, way_type);
                 switch (way_type) {
@@ -359,7 +358,17 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
                     way_types.Bicycle => way_collection.bicycle.append(alloc.*, .{ .nodes = node_array }) catch unreachable,
                     way_types.Car => way_collection.car.append(alloc.*, .{ .nodes = node_array }) catch unreachable,
                     way_types.Rail => way_collection.rail.append(alloc.*, .{ .nodes = node_array }) catch unreachable,
-                    way_types.Building => way_collection.building.append(alloc.*, .{ .nodes = node_array, .height = building_height }) catch unreachable,
+                    way_types.Building => {
+                        for (node_array) |node_index| {
+                            if (building_height == 0.0) {
+                                building_height = 2.7 * 4;
+                            }
+                            const node = node_list.values()[node_index];
+                            const node_entry_idx = node_list.keys()[node_index];
+                            node_list.put(node_entry_idx, .{ node[0], node[1], building_height }) catch unreachable;
+                        }
+                        way_collection.building.append(alloc.*, .{ .nodes = node_array, .height = building_height }) catch unreachable;
+                    },
                     else => way_collection.other.append(alloc.*, .{ .nodes = node_array }) catch unreachable,
                 }
 
@@ -372,7 +381,7 @@ pub fn parseChunk(ctx: *metadata_t, chunk: []const u8, node_list: *std.AutoArray
     }
 }
 
-pub fn parseOSM(ctx: *metadata_t, data_path: []const u8, node_list: *std.AutoArrayHashMap(usize, [2]f32), node_refs: *std.AutoArrayHashMap(usize, usize), way_list: *WayCollection, alloc: *std.mem.Allocator) !void {
+pub fn parseOSM(ctx: *metadata_t, data_path: []const u8, node_list: *std.AutoArrayHashMap(usize, [3]f32), node_refs: *std.AutoArrayHashMap(usize, usize), way_list: *WayCollection, alloc: *std.mem.Allocator) !void {
     const f = try std.fs.cwd().openFile(data_path, .{});
     defer f.close();
 
@@ -436,7 +445,7 @@ pub fn main() !void {
     const metadata_path = try std.fs.path.join(alloc, &.{ args.output, "map_data.json" });
     defer alloc.free(metadata_path);
 
-    var node_list = std.AutoArrayHashMap(usize, [2]f32).init(alloc);
+    var node_list = std.AutoArrayHashMap(usize, [3]f32).init(alloc);
     defer {
         node_list.deinit();
     }
@@ -488,6 +497,7 @@ pub fn main() !void {
     for (nodes) |node| {
         data_writer.writeAll(std.mem.asBytes(&node[1])) catch unreachable;
         data_writer.writeAll(std.mem.asBytes(&node[0])) catch unreachable;
+        data_writer.writeAll(std.mem.asBytes(&node[2])) catch unreachable;
     }
 
     std.debug.print("Way 1: {any}\n", .{way_collection.foot.get(way_collection.foot.len - 1).nodes});

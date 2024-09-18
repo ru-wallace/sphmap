@@ -17,8 +17,6 @@ class WasmHandler {
       new Uint8Array(this.memory.buffer, fs, fs_len),
     );
 
-    console.log("Vertex shader: " + vs_source);
-    console.log("Fragment shader: " + fs_source);
 
     const vertexShader = loadShader(this.gl, this.gl.VERTEX_SHADER, vs_source);
     const fragmentShader = loadShader(
@@ -48,7 +46,7 @@ class WasmHandler {
     const positionBuffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
-    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, true, 0, 0);
+    this.gl.vertexAttribPointer(0, 3, this.gl.FLOAT, true, 0, 0);
     this.gl.enableVertexAttribArray(0);
     //this.gl.vertexAttribPointer(1, 4, this.gl.FLOAT, false, 24, 8);
     //this.gl.enableVertexAttribArray(1);
@@ -58,10 +56,10 @@ class WasmHandler {
 
 
   bindEbo(ptr, len) {
-    console.log("bindEbo ptr: " + ptr + " len: " + len);
+    //console.log("bindEbo ptr: " + ptr + " len: " + len);
     const indices = new Uint32Array(this.memory.buffer, ptr, len);
-    console.log(indices.slice(0, 30));
-    console.log(indices.length)
+    //console.log(indices.slice(0, 30));
+    //console.log(indices.length)
     const ebo = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, ebo);
     this.gl.bufferData(
@@ -98,7 +96,7 @@ class WasmHandler {
     this.gl.uniform1f(this.uniform_locs[loc], val);
   }
   glUniform4f(loc, val1, val2, val3, val4) {
-    console.log("Uniform4f: " + val1 + " " + val2 + " " + val3 + " " + val4);
+    //console.log("Uniform4f: " + val1 + " " + val2 + " " + val3 + " " + val4);
     this.gl.uniform4f(this.uniform_locs[loc], val1, val2, val3, val4);
   }
 
@@ -111,8 +109,8 @@ class WasmHandler {
   glUniformMatrix4fv(loc, transpose, ptr) {
     
     const data = new Float32Array(this.memory.buffer, ptr, 16);
-    console.log("UniformMatrix4fv: Addr:" + ptr);
-    console.log(data);
+    //console.log("UniformMatrix4fv: Addr:" + ptr);
+    //console.log(data);
     this.gl.uniformMatrix4fv(this.uniform_locs[loc], transpose, data);
   }
 
@@ -147,6 +145,32 @@ function loadShader(gl, type, source) {
   return shader;
 }
 
+
+
+function updateFOV(zoomVal) {
+  document.getElementById("fov").value = zoomVal;
+  document.getElementById("fovVal").innerHTML = zoomVal;
+}
+
+function updateTranslation(tXVal, tYVal, tZVal) {
+  document.getElementById("tXVal").innerHTML = tXVal; 
+  document.getElementById("tX").value = tXVal;
+  document.getElementById("tYVal").innerHTML = tYVal;
+  document.getElementById("tY").value = tYVal;
+  document.getElementById("tZVal").innerHTML = tZVal;
+  document.getElementById("tZ").value = tZVal;
+}
+function updateRotation(rXVal, rYVal, rZVal) {
+  document.getElementById("rXVal").innerHTML = rXVal;
+  document.getElementById("rX").value
+  document.getElementById("rYVal").innerHTML = rYVal;
+  document.getElementById("rY").value
+  document.getElementById("rZVal").innerHTML = rZVal;
+  document.getElementById("rZ").value
+}
+
+
+
 async function instantiateWasmModule(wasm_handlers) {
   const wasmEnv = {
     env: {
@@ -166,6 +190,11 @@ async function instantiateWasmModule(wasm_handlers) {
       glUniform4f: wasm_handlers.glUniform4f.bind(wasm_handlers),
       glUniform1i: wasm_handlers.glUniform1i.bind(wasm_handlers),
       glUniformMatrix4fv: wasm_handlers.glUniformMatrix4fv.bind(wasm_handlers),
+      reportFOV: updateFOV.bind(wasm_handlers),
+      reportTranslation: updateTranslation.bind(wasm_handlers),
+      reportRotation: updateRotation.bind(wasm_handlers),
+
+
     },
   };
 
@@ -302,6 +331,8 @@ class CanvasInputHandler {
 
 function makeGl(canvas) {
   const gl = canvas.getContext("webgl2");
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.CULL_FACE);
 
   if (gl === null) {
     throw new Error("Failed to initialize gl context");
@@ -319,68 +350,84 @@ async function init() {
   await loadMetadata(mod);
 
   mod.instance.exports.init(canvasAspect(canvas));
-  mod.instance.exports.render();
+  //mod.instance.exports.render();
 
   const canvas_callbacks = new CanvasInputHandler(canvas, mod);
   canvas_callbacks.setCanvasCallbacks();
 
-
-  const zoomSlider = document.getElementById("zoom");
-  const zoomValue = document.getElementById("zoomVal");
-
-
   const tXSlider = document.getElementById("tX");
-  const tXValue = document.getElementById("tXVal");
-
   const tYSlider = document.getElementById("tY");
-  const tYValue = document.getElementById("tYVal");
-
   const tZSlider = document.getElementById("tZ");
-  const tZValue = document.getElementById("tZVal");
-
   const rXSlider = document.getElementById("rX");
-  const rXValue = document.getElementById("rXVal");
-
   const rYSlider = document.getElementById("rY");
-  const rYValue = document.getElementById("rYVal");
-
   const rZSlider = document.getElementById("rZ");
-  const rZValue = document.getElementById("rZVal");
 
 
-  async function updateMats() {
-    const zoom = zoomSlider.value;
-    const tX = tXSlider.value;
-    const tY = tYSlider.value;
-    const tZ = tZSlider.value;
+  const viewAngleSlider = document.getElementById("fov");
+  const nearSlider = document.getElementById("near");
+  const farSlider = document.getElementById("far");
 
-    const rX = rXSlider.value;
-    const rY = rYSlider.value;
-    const rZ = rZSlider.value;
+  const roofZSlider = document.getElementById("roof");
 
-    zoomValue.innerHTML = zoom;
-    tXValue.innerHTML = tX;
-    tYValue.innerHTML = tY;
-    tZValue.innerHTML = tZ;
 
-    rXValue.innerHTML = rX;
-    rYValue.innerHTML = rY;
-    rZValue.innerHTML = rZ;
-    //scale: f32, x: f32, y: f32, z: f32, a: f32
-    mod.instance.exports.setTransformation(zoom, tX, tY, tZ, rX, rY, rZ);
+  tXSlider.oninput = () => {
+    document.getElementById("tXVal").innerHTML = tXSlider.value;
+    mod.instance.exports.setTranslation(tXSlider.value, tYSlider.value, tZSlider.value);
+    mod.instance.exports.render();
+  }
+  tYSlider.oninput = () => {
+    document.getElementById("tYVal").innerHTML = tYSlider.value;
+    mod.instance.exports.setTranslation(tXSlider.value, tYSlider.value, tZSlider.value);
+    mod.instance.exports.render();
+  }
+  tZSlider.oninput = () => {
+    document.getElementById("tZVal").innerHTML = tZSlider.value;
+    mod.instance.exports.setTranslation(tXSlider.value, tYSlider.value, tZSlider.value);
+    mod.instance.exports.render();
+  }
+  rXSlider.oninput = () => {
+    document.getElementById("rXVal").innerHTML = rXSlider.value;
+    mod.instance.exports.setRotation(rXSlider.value, rYSlider.value, rZSlider.value);
+    mod.instance.exports.render();
+  }
+  rYSlider.oninput = () => {
+    document.getElementById("rYVal").innerHTML = rYSlider.value;
+    mod.instance.exports.setRotation(rXSlider.value, rYSlider.value, rZSlider.value);
+    mod.instance.exports.render();
+  }
+  rZSlider.oninput = () => {
+    document.getElementById("rZVal").innerHTML = rZSlider.value;
+    mod.instance.exports.setRotation(rXSlider.value, rYSlider.value, rZSlider.value);
     mod.instance.exports.render();
   }
 
-  zoomSlider.oninput = updateMats;
-  tXSlider.oninput = updateMats;
-  tYSlider.oninput = updateMats;
-  tZSlider.oninput = updateMats;
-  rXSlider.oninput = updateMats;
-  rYSlider.oninput = updateMats;
-  rZSlider.oninput = updateMats;
+  viewAngleSlider.oninput = () => {
+    document.getElementById("fovVal").innerHTML = viewAngleSlider.value;
+    mod.instance.exports.setViewAngle(viewAngleSlider.value);
+    mod.instance.exports.render();
+  }
 
-  updateMats();
+  nearSlider.oninput = () => {
+    document.getElementById("nearFarRatio").innerHTML = nearSlider.value / farSlider.value;
+    document.getElementById("nearVal").innerHTML = nearSlider.value;
+    mod.instance.exports.setNearFar(nearSlider.value, farSlider.value);
+    mod.instance.exports.render();
+  }
 
+  farSlider.oninput = () => {
+    document.getElementById("farVal").innerHTML = farSlider.value;
+    mod.instance.exports.setNearFar(nearSlider.value, farSlider.value);
+    mod.instance.exports.render();
+  }
+
+  roofZSlider.oninput = () => {
+    document.getElementById("roofVal").innerHTML = roofZSlider.value;
+    mod.instance.exports.setRoofHeight(roofZSlider.value);
+    mod.instance.exports.render();
+  }
+
+  //updateMats();
+  mod.instance.exports.render();
 
 
 }
